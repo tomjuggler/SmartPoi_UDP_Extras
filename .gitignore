@@ -1,5 +1,10 @@
 # --- cecli tooling ---
-.cecli*
+.cecli.conf.yml
+.cecli.model.metadata.json
+.cecli/*
+# ...but keep the project-local skills tracked (the rest of .cecli stays ignored)
+!.cecli/skills
+!.cecli/skills/**
 
 # --- Gradle / build output ---
 .gradle/
