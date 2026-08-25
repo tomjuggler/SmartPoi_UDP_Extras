@@ -1,0 +1,35 @@
+# --- cecli tooling ---
+.cecli*
+
+# --- Gradle / build output ---
+.gradle/
+build/
+app/build/
+*.apk
+*.aab
+*.ap_
+*.dex
+
+# --- Local / machine-specific config ---
+local.properties
+
+# --- Android Studio / IntelliJ ---
+.idea/
+*.iml
+*.ipr
+*.iws
+captures/
+.externalNativeBuild/
+.cxx/
+.kotlin/
+
+# --- Logs ---
+*.log
+
+# --- Keystores ---
+*.jks
+*.keystore
+
+# --- OS junk ---
+.DS_Store
+Thumbs.db
