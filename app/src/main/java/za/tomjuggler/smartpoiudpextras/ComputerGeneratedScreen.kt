@@ -1,6 +1,8 @@
 package za.tomjuggler.smartpoiudpextras
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
@@ -226,7 +228,11 @@ fun ComputerGeneratedScreen() {
         }
     }
 
-    Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    // scrollable so the 13 shape chips + preview never overflow/cover the controls
+    Column(
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
         Text(
             "Shapes masked over Perlin / Arc Noise / Plasma — background stays black.",
             color = Color.White.copy(alpha = 0.7f), fontSize = 14.sp
