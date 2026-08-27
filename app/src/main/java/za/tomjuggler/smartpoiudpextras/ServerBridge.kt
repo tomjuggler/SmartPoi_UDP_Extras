@@ -136,11 +136,13 @@ object ServerBridge {
                     val addr = InetAddress.getByName(host)
 
                     // Declare our pixel size (Settings is the single source of
-                    // truth). Legacy protocol also asks for a frame rate.
+                    // truth). OWNER's phone also sets the PARTY playback fps
+                    // from its Settings fps cap (daemon: owner REG wins).
                     val px = PoiState.pixelSize.coerceIn(16, 120)
                     val fps = PoiState.fpsCap.coerceIn(0.5f, 60f)
                     val regMsg = if (mp) {
-                        "$MP_REG_MSG {\"party\":$partyId,\"size\":$px}"
+                        val ownerFlag = if (MagicPoi.joinedIsOwner) ",\"owner\":true" else ""
+                        "$MP_REG_MSG {\"party\":$partyId,\"size\":$px,\"fps\":$fps$ownerFlag}"
                     } else {
                         "$REG_MSG {\"size\":$px,\"fps\":$fps}"
                     }.toByteArray()
@@ -158,10 +160,12 @@ object ServerBridge {
                                 val okPrefix = if (mp) MP_REG_OK_PREFIX else REG_OK_PREFIX
                                 if (reply.startsWith(okPrefix)) {
                                     if (mp) {
-                                        // "MAGICPOI_REG_OK party=7 state=ready"
+                                        // "MAGICPOI_REG_OK party=7 state=ready fps=5.00"
                                         magicPoiPartyState = reply
                                             .substringAfter("state=", "").trim()
-                                        serverFps = 0f
+                                            .substringBefore(" ").trim()
+                                        serverFps = reply.substringAfter("fps=", "")
+                                            .trim().toFloatOrNull() ?: 0f
                                     } else {
                                         // "SMARTPOI_REG_OK fps=10.00"
                                         serverFps = reply.substringAfter("fps=", "")
@@ -352,7 +356,7 @@ fun ServerBridgeScreen() {
             "Will request: ${PoiState.pixelSize}px",
             color = NeonYellow, fontSize = 14.sp, fontWeight = FontWeight.Medium
         )
-        if (!ServerBridge.magicPoiMode && ServerBridge.serverFps > 0f) {
+        if (ServerBridge.serverFps > 0f) {
             Text(
                 "Server assigned: %.2f fps".format(ServerBridge.serverFps),
                 color = Color(0xFF00E676), fontSize = 13.sp
