@@ -223,13 +223,18 @@ fun MagicPoiScreen() {
 
     // Logged out: auth form
     if (MagicPoi.token == null) {
-        AuthForm { msg ->
-            stat = msg
-            if (MagicPoi.token != null) MagicPoi.listParties { m, arr ->
-                stat = m; parties = arr
+        Column(
+            Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            AuthForm { msg ->
+                stat = msg
+                if (MagicPoi.token != null) MagicPoi.listParties { m, arr ->
+                    stat = m; parties = arr
+                }
             }
+            Text(stat, color = NeonYellow, fontSize = 13.sp)
         }
-        Text(stat, color = NeonYellow, fontSize = 13.sp)
         return
     }
 
@@ -348,7 +353,7 @@ fun AuthForm(onResult: (String) -> Unit) {
     var busy by remember { mutableStateOf(false) }
 
     Column(
-        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
+        Modifier.fillMaxWidth().padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
