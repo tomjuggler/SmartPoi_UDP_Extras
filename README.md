@@ -15,6 +15,8 @@ Built with Kotlin + Jetpack Compose (minSdk 26, target/compile SDK 36).
 | **Audio Reactive** | Microphone RMS volume drives a centred gradient line, with an adjustable gain slider. Ported from `udp_send_SmartPoi_8_sound_activation.pde`. |
 | **Light Saber** | Coloured right-angle triangle pattern; ON/OFF play `lightup.mp3` / `lightoff.mp3`, swinging the phone plays `wave.mp3` (accelerometer). Each row is sent 7× for persistence. Ported from `udp_send_SmartPoi_8.pde`. |
 | **Settings** | POI 1 / POI 2 IP addresses (AP mode), default LED strip size, stream FPS cap (0.5–10.0), packet repeat, and on-board POI modes 1–6. |
+| **Magic Poi** (`udp_upgrade`) | Log in / sign up (JWT) to a MagicPoiAlphaServer, list parties you own or are invited to, join the stream. The party OWNER gets START / STOP buttons. |
+| **Server Bridge** (`udp_upgrade`) | Phone as UDP relay: two modes — **Magic Poi party** (MAGICPOI_* protocol to magicpoi-streamd, coordinates from the join API, shows "waiting for start" cylon state) and **Legacy server** (old SMARTPOI_* protocol, no auth, still works against the old server on :2391). |
 
 ## Requirements
 

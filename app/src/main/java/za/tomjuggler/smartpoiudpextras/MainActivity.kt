@@ -44,6 +44,7 @@ class MainActivity : ComponentActivity() {
         window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         PoiState.load(this)
         ServerBridge.load(this)
+        MagicPoi.load(this)
         setContent {
             SmartPoiApp()
         }
@@ -53,6 +54,7 @@ class MainActivity : ComponentActivity() {
         super.onPause()
         PoiState.save(this)
         ServerBridge.save(this)
+        MagicPoi.save(this)
     }
 }
 
@@ -87,6 +89,7 @@ enum class Screen(val title: String, val icon: ImageVector) {
     AudioReactive("Audio Reactive", Icons.Filled.GraphicEq),
     LightSaber("Light Saber", Icons.Filled.Bolt),
     ServerBridge("Server Bridge", Icons.Filled.Cloud),
+    MagicPoiParties("Magic Poi", Icons.Filled.Cloud),
     Settings("Settings", Icons.Filled.Settings)
 }
 
@@ -112,6 +115,7 @@ fun AppScaffold() {
                 Screen.AudioReactive -> AudioReactiveScreen()
                 Screen.LightSaber -> LightSaberScreen()
                 Screen.ServerBridge -> ServerBridgeScreen()
+                Screen.MagicPoiParties -> MagicPoiScreen()
                 Screen.Settings -> SettingsScreen()
             }
 
@@ -161,6 +165,8 @@ fun HomeMenu(onSelect: (Screen) -> Unit) {
             listOf(Color(0xFF00E676), Color(0xFF00BFA5))) { onSelect(Screen.LightSaber) }
         MenuCard("Server Bridge", "Relay an LED stream from a network server to the POIs",
             listOf(Color(0xFF7C4DFF), NeonCyan)) { onSelect(Screen.ServerBridge) }
+        MenuCard("Magic Poi", "Log in, join a party stream, owner starts the show",
+            listOf(NeonMagenta, Color(0xFF7C4DFF))) { onSelect(Screen.MagicPoiParties) }
         Spacer(Modifier.height(8.dp))
         OutlinedButton(onClick = { PoiState.primeForStreaming { PoiState.statusText = it } }) {
             Text("Prime POIs (LEDs OFF → UDP mode)")
