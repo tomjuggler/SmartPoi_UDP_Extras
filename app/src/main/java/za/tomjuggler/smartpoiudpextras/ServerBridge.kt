@@ -42,6 +42,12 @@ object ServerBridge {
     var udpPort by mutableStateOf(2391)
     var connected by mutableStateOf(false)
     var packetsRelayed by mutableStateOf(0L)
+    /** Pixel size this phone asks the server for (sent at REG). */
+    var pixelSize by mutableStateOf(60)
+    /** Frame rate this phone asks for — the FIRST client to connect sets it. */
+    var frameRate by mutableStateOf(10f)
+    /** Frame rate the server actually assigned us (from REG_OK reply). */
+    var serverFps by mutableStateOf(0f)
 
     private var rxThread: Thread? = null
     @Volatile var running = false
@@ -59,6 +65,8 @@ object ServerBridge {
         serverIp = p.getString("bridge_ip", serverIp) ?: serverIp
         httpPort = p.getInt("bridge_http", httpPort)
         udpPort = p.getInt("bridge_udp", udpPort)
+        pixelSize = p.getInt("bridge_px", pixelSize)
+        frameRate = p.getFloat("bridge_fps", frameRate)
     }
 
     fun save(ctx: Context) {
@@ -66,6 +74,8 @@ object ServerBridge {
             .putString("bridge_ip", serverIp)
             .putInt("bridge_http", httpPort)
             .putInt("bridge_udp", udpPort)
+            .putInt("bridge_px", pixelSize)
+            .putFloat("bridge_fps", frameRate)
             .apply()
     }
 
@@ -103,15 +113,26 @@ object ServerBridge {
             rxThread = Thread {
                 try {
                     val addr = InetAddress.getByName(serverIp)
-                    val msg = REG_MSG.toByteArray()
+
+                    // RESPONSIVE protocol: declare our pixel size + wanted fps.
+                    // First client while the server is idle sets THE frame rate;
+                    // later clients inherit it. Our own size is always honored.
+                    pixelSize = pixelSize.coerceIn(16, 120)
+                    frameRate = frameRate.coerceIn(0.5f, 60f)
+                    val regMsg = ("$REG_MSG {\"size\":$pixelSize,\"fps\":$frameRate}")
+                        .toByteArray()
                     var registered = false
                     outer@ for (attempt in 1..3) {
-                        s.send(DatagramPacket(msg, msg.size, addr, udpPort))
+                        s.send(DatagramPacket(regMsg, regMsg.size, addr, udpPort))
                         try {
-                            val buf = ByteArray(64)
+                            val buf = ByteArray(128)
                             val rp = DatagramPacket(buf, buf.size)
                             s.receive(rp)
-                            if (String(buf, 0, rp.length).startsWith(REG_OK_PREFIX)) {
+                            val reply = String(buf, 0, rp.length)
+                            if (reply.startsWith(REG_OK_PREFIX)) {
+                                // REG_OK format: "SMARTPOI_REG_OK fps=10.00"
+                                serverFps = reply.substringAfter("fps=", "")
+                                    .trim().toFloatOrNull() ?: frameRate
                                 registered = true
                                 break@outer
                             }
@@ -123,7 +144,8 @@ object ServerBridge {
                         return@Thread
                     }
                     connected = true
-                    onStatus("Bridging server $serverIp → ${PoiState.ip1} / ${PoiState.ip2}")
+                    onStatus("Bridging $serverIp → ${PoiState.ip1}/${PoiState.ip2} " +
+                        "· ${pixelSize}px @ ${"%.2f".format(serverFps)} fps")
 
                     // pre-allocate once — no allocation in the hot loop (GC pause note
                     // in the research chat). One received datagram = one row.
@@ -174,24 +196,26 @@ object ServerBridge {
     }
 
     /**
-     * Leave the stream: UNREG datagram removes THIS phone from the server's
-     * client set. The server stops generating only when the last client is
-     * gone (other phones keep watching). /api/stop stays as a manual master kill.
+     * Leave the stream: UNREG datagram must go out from the SAME socket we
+     * registered with (the server identifies clients by source address:port).
+     * The server stops generating only when the last client is gone and resets
+     * its frame rate. /api/stop stays as a manual master kill.
      */
     fun stop(onStatus: (String) -> Unit) {
+        val s = socket
         running = false
         connected = false
-        CoroutineScope(Dispatchers.IO).launch {
+        if (s != null && !s.isClosed) {
             try {
-                val s = DatagramSocket()
                 val msg = UNREG_MSG.toByteArray()
                 s.send(DatagramPacket(msg, msg.size,
                     InetAddress.getByName(serverIp), udpPort))
-                s.close()
                 onStatus("Left stream ($packetsRelayed packets relayed)")
             } catch (e: Exception) {
                 onStatus("Unregister error: ${e.message} ($packetsRelayed relayed)")
             }
+        } else {
+            onStatus("Left stream ($packetsRelayed packets relayed)")
         }
         try { socket?.close() } catch (_: Exception) {}
         socket = null
@@ -247,6 +271,48 @@ fun ServerBridgeScreen() {
                     busy = false
                 }
             }, enabled = !busy) { Text("Test connection") }
+        }
+
+        // --- RESPONSIVE: this phone's stream parameters -----------------------
+        Text(
+            "Stream parameters (sent at registration). First phone to connect " +
+            "sets the server frame rate; later phones get the current rate. " +
+            "Every phone gets its own pixel-size stream (server downscales from " +
+            "the largest, max 120 on test branch).",
+            color = Color.White.copy(alpha = 0.55f), fontSize = 12.sp
+        )
+        var fpsText by remember(ServerBridge.frameRate) {
+            mutableStateOf("%.1f".format(ServerBridge.frameRate))
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedTextField(
+                value = ServerBridge.pixelSize.toString(),
+                onValueChange = { v ->
+                    v.toIntOrNull()?.let { n ->
+                        if (n in 16..120) ServerBridge.pixelSize = n
+                    }
+                },
+                label = { Text("Pixel size (16–120)") }, singleLine = true,
+                modifier = Modifier.width(150.dp)
+            )
+            OutlinedTextField(
+                value = fpsText,
+                onValueChange = { v ->
+                    fpsText = v
+                    v.toFloatOrNull()?.let { f ->
+                        if (f in 0.5f..60f) ServerBridge.frameRate = f
+                    }
+                },
+                label = { Text("Wanted FPS") }, singleLine = true,
+                modifier = Modifier.width(150.dp)
+            )
+        }
+        if (ServerBridge.serverFps > 0f) {
+            Text(
+                "Server assigned: %.2f fps · streaming ${ServerBridge.pixelSize}px"
+                    .format(ServerBridge.serverFps),
+                color = Color(0xFF00E676), fontSize = 13.sp
+            )
         }
 
         PrimeAndStopRow(
