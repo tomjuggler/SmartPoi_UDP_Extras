@@ -38,3 +38,4 @@ captures/
 # --- OS junk ---
 .DS_Store
 Thumbs.db
+.cecli*

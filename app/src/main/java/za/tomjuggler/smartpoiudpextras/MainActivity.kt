@@ -18,6 +18,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bolt
+import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Settings
@@ -42,6 +43,7 @@ class MainActivity : ComponentActivity() {
         // Streaming drives the POIs — the screen must never time out while the app is open
         window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         PoiState.load(this)
+        ServerBridge.load(this)
         setContent {
             SmartPoiApp()
         }
@@ -50,6 +52,7 @@ class MainActivity : ComponentActivity() {
     override fun onPause() {
         super.onPause()
         PoiState.save(this)
+        ServerBridge.save(this)
     }
 }
 
@@ -83,6 +86,7 @@ enum class Screen(val title: String, val icon: ImageVector) {
     ZapGame("Zap Game", Icons.Filled.Bolt),
     AudioReactive("Audio Reactive", Icons.Filled.GraphicEq),
     LightSaber("Light Saber", Icons.Filled.Bolt),
+    ServerBridge("Server Bridge", Icons.Filled.Cloud),
     Settings("Settings", Icons.Filled.Settings)
 }
 
@@ -107,6 +111,7 @@ fun AppScaffold() {
                 Screen.ZapGame -> ZapGameScreen()
                 Screen.AudioReactive -> AudioReactiveScreen()
                 Screen.LightSaber -> LightSaberScreen()
+                Screen.ServerBridge -> ServerBridgeScreen()
                 Screen.Settings -> SettingsScreen()
             }
 
@@ -154,6 +159,8 @@ fun HomeMenu(onSelect: (Screen) -> Unit) {
             listOf(NeonYellow, Color(0xFFFF6D00))) { onSelect(Screen.AudioReactive) }
         MenuCard("Light Saber", "Colour triangle saber with swing sounds",
             listOf(Color(0xFF00E676), Color(0xFF00BFA5))) { onSelect(Screen.LightSaber) }
+        MenuCard("Server Bridge", "Relay an LED stream from a network server to the POIs",
+            listOf(Color(0xFF7C4DFF), NeonCyan)) { onSelect(Screen.ServerBridge) }
         Spacer(Modifier.height(8.dp))
         OutlinedButton(onClick = { PoiState.primeForStreaming { PoiState.statusText = it } }) {
             Text("Prime POIs (LEDs OFF → UDP mode)")

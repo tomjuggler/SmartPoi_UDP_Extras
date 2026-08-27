@@ -63,6 +63,7 @@ fun UtilitiesDrawer(
                     Screen.ZapGame,
                     Screen.AudioReactive,
                     Screen.LightSaber,
+                    Screen.ServerBridge,
                     Screen.Settings
                 ).forEach { s ->
                     NavigationDrawerItem(
