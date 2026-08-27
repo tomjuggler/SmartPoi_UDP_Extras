@@ -194,7 +194,7 @@ fun MenuCard(title: String, subtitle: String, colors: List<Color>, onClick: () -
 @Composable
 fun SizeSelector(selected: Int, onPick: (Int) -> Unit) {
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        listOf(36, 60, 72, 120, 200).forEach { px ->
+        listOf(36, 60, 72, 120).forEach { px ->
             FilterChip(
                 selected = selected == px,
                 onClick = { onPick(px); PoiState.pixelSize = px },
