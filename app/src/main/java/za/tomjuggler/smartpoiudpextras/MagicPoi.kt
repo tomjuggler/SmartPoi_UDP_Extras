@@ -39,7 +39,20 @@ import java.net.URL
  * live on the "Magic Poi" tab (ServerBridge screen, party mode).
  */
 object MagicPoi {
-    var baseUrl by mutableStateOf("https://magicpoi.duckdns.org")
+    var serverHost by mutableStateOf("magicpoi.duckdns.org")
+    var serverPort by mutableStateOf(80)
+    /** Daemon UDP port (stream + REG/PING). Default 2393. */
+    var udpPort by mutableStateOf(2393)
+
+    /** Full base URL: https on port 443, otherwise http (lets a local test
+     *  server on port 5000 be reached as http://host:5000). */
+    val baseUrl: String
+        get() {
+            val host = serverHost.trim().trimEnd('/').ifBlank { "magicpoi.duckdns.org" }
+            val scheme = if (serverPort == 443) "https" else "http"
+            return "$scheme://$host:$serverPort"
+        }
+
     var token by mutableStateOf<String?>(null)
     var username by mutableStateOf<String?>(null)
     /** Kept so an expired JWT can be refreshed silently. Cleared on explicit logout. */
@@ -56,15 +69,28 @@ object MagicPoi {
 
     fun load(ctx: Context) {
         val p = ctx.getSharedPreferences("SmartPoiPrefs", Context.MODE_PRIVATE)
-        baseUrl = p.getString("magicpoi_url", baseUrl) ?: baseUrl
+        serverHost = p.getString("magicpoi_host", serverHost) ?: serverHost
+        serverPort = p.getInt("magicpoi_port", -1).takeIf { it > 0 } ?: serverPort
+        udpPort = p.getInt("magicpoi_udpport", -1).takeIf { it > 0 } ?: udpPort
         token = p.getString("magicpoi_token", null)
         username = p.getString("magicpoi_user", null)
         password = p.getString("magicpoi_pass", null)
+        // Migrate the legacy single-URL pref if present and no new host stored yet.
+        val legacy = p.getString("magicpoi_url", null)
+        if (legacy != null && !p.contains("magicpoi_host")) {
+            runCatching { java.net.URI(legacy) }.getOrNull()?.let { u ->
+                u.host?.let { serverHost = it }
+                serverPort = if (u.port != -1) u.port else if (u.scheme == "https") 443 else 80
+            }
+            save(ctx)
+        }
     }
 
     fun save(ctx: Context) {
         ctx.getSharedPreferences("SmartPoiPrefs", Context.MODE_PRIVATE).edit()
-            .putString("magicpoi_url", baseUrl)
+            .putString("magicpoi_host", serverHost)
+            .putInt("magicpoi_port", serverPort)
+            .putInt("magicpoi_udpport", udpPort)
             .putString("magicpoi_token", token)
             .putString("magicpoi_user", username)
             .putString("magicpoi_pass", password)
@@ -200,7 +226,9 @@ object MagicPoi {
             try {
                 val resp = postWithAuth("/api/stream/party/$partyId/join", JSONObject())
                 ServerBridge.magicPoiHost = resp.optString("udp_host")
-                ServerBridge.magicPoiUdpPort = resp.optInt("udp_port", 2393)
+                // UDP destination port comes from Settings (default 2393) so the
+                // user can point at a local test daemon on a different port.
+                ServerBridge.magicPoiUdpPort = udpPort
                 joinedPartyId = resp.optInt("party_id")
                 joinedIsOwner = resp.optBoolean("is_owner")
                 partyState = resp.optString("state", "ready")

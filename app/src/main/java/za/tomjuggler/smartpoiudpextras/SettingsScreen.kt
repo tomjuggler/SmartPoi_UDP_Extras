@@ -141,9 +141,32 @@ private fun MagicPoiAccountSection() {
             // feedback line FIRST (never below a fillMaxSize child — off-screen bug)
             if (stat.isNotEmpty()) Text(stat, color = NeonYellow, fontSize = 13.sp)
             OutlinedTextField(
-                value = MagicPoi.baseUrl,
-                onValueChange = { MagicPoi.baseUrl = it.trim() },
-                label = { Text("Server address (https://…)") },
+                value = MagicPoi.serverHost,
+                onValueChange = { MagicPoi.serverHost = it.trim() },
+                label = { Text("Server host") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+            // Raw-text state so out-of-range intermediates don't fight the keyboard.
+            var portText by remember { mutableStateOf(MagicPoi.serverPort.toString()) }
+            OutlinedTextField(
+                value = portText,
+                onValueChange = { v ->
+                    portText = v
+                    v.toIntOrNull()?.let { if (it in 1..65535) MagicPoi.serverPort = it }
+                },
+                label = { Text("Server port (default 80)") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+            var udpText by remember { mutableStateOf(MagicPoi.udpPort.toString()) }
+            OutlinedTextField(
+                value = udpText,
+                onValueChange = { v ->
+                    udpText = v
+                    v.toIntOrNull()?.let { if (it in 1..65535) MagicPoi.udpPort = it }
+                },
+                label = { Text("UDP port (default 2393)") },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth()
             )
