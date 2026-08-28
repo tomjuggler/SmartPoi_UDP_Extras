@@ -224,6 +224,11 @@ object MagicPoi {
     fun join(partyId: Int, onResult: (String) -> Unit) {
         CoroutineScope(Dispatchers.IO).launch {
             try {
+                // One party joined at a time: if we're already on another party,
+                // unregister its relay first so the daemon stops counting us there.
+                if (joinedPartyId != null && joinedPartyId != partyId) {
+                    ServerBridge.stop {}
+                }
                 val resp = postWithAuth("/api/stream/party/$partyId/join", JSONObject())
                 ServerBridge.magicPoiHost = resp.optString("udp_host")
                 // UDP destination port comes from Settings (default 2393) so the

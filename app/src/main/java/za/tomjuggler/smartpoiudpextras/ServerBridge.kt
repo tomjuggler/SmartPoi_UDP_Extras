@@ -370,28 +370,32 @@ fun ServerBridgeScreen() {
             )
         }
 
-        PrimeAndStopRow(
-            running = ServerBridge.running || busy,
-            onStart = {
-                busy = true
-                stat = "Priming POIs…"
-                PoiState.primeForStreaming { _ ->
-                    ServerBridge.start { msg ->
-                        stat = msg
-                        busy = false
+        // Test Stream (non-party) mode uses the classic ON/OFF strip; in Magic
+        // Poi mode the global "Poi Connection" toggle lives inside the party list.
+        if (!ServerBridge.magicPoiMode) {
+            PrimeAndStopRow(
+                running = ServerBridge.running || busy,
+                onStart = {
+                    busy = true
+                    stat = "Priming POIs…"
+                    PoiState.primeForStreaming { _ ->
+                        ServerBridge.start { msg ->
+                            stat = msg
+                            busy = false
+                        }
+                    }
+                },
+                onStop = {
+                    busy = true
+                    ServerBridge.stop { stopMsg ->
+                        PoiState.signalStop { poiMsg ->
+                            stat = "$stopMsg · $poiMsg"
+                            busy = false
+                        }
                     }
                 }
-            },
-            onStop = {
-                busy = true
-                ServerBridge.stop { stopMsg ->
-                    PoiState.signalStop { poiMsg ->
-                        stat = "$stopMsg · $poiMsg"
-                        busy = false
-                    }
-                }
-            }
-        )
+            )
+        }
 
         Text(stat, color = NeonYellow, fontSize = 13.sp)
         Text(
@@ -417,17 +421,6 @@ fun MagicPoiPartiesInline() {
 
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text("Signed in: ${MagicPoi.username}", color = NeonCyan, fontSize = 13.sp)
-        // Global Leave: re-enables Join so a stale UDP session (daemon pruned
-        // us, or relay died in background) can be re-joined fresh.
-        if (MagicPoi.joinedPartyId != null) {
-            Button(
-                onClick = { MagicPoi.leave { MagicPoi.refreshState() } },
-                colors = ButtonDefaults.buttonColors(containerColor = NeonMagenta),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text("Leave party #${MagicPoi.joinedPartyId} (re-join)")
-            }
-        }
         val arr = parties
         when {
             arr == null -> Text(stat, color = Color.White.copy(alpha = 0.6f), fontSize = 12.sp)
@@ -435,6 +428,7 @@ fun MagicPoiPartiesInline() {
             else -> for (i in 0 until arr.length()) {
                 val p = arr.optJSONObject(i) ?: continue
                 val pid = p.optInt("party_id")
+                val joined = MagicPoi.joinedPartyId == pid
                 Row(
                     Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -447,20 +441,13 @@ fun MagicPoiPartiesInline() {
                         fontSize = 13.sp,
                         modifier = Modifier.weight(1f)
                     )
-                    if (MagicPoi.joinedPartyId == pid) {
-                        if (MagicPoi.joinedIsOwner && MagicPoi.partyState != "playing") {
-                            Button(onClick = {
-                                MagicPoi.start { MagicPoi.partyState = "playing" }
-                            }) { Text("START") }
-                        } else if (MagicPoi.joinedIsOwner && MagicPoi.partyState == "playing") {
-                            Button(onClick = {
-                                MagicPoi.stop { MagicPoi.partyState = "ready" }
-                            }, colors = ButtonDefaults.buttonColors(containerColor = NeonMagenta)) {
-                                Text("STOP")
-                            }
-                        } else {
-                            Text("JOINED", color = Color(0xFF00E676), fontSize = 12.sp)
-                        }
+                    // Join/Leave toggle per party — one party joined at a time
+                    // (MagicPoi.join leaves any previous party first).
+                    if (joined) {
+                        Button(
+                            onClick = { MagicPoi.leave { MagicPoi.refreshState() } },
+                            colors = ButtonDefaults.buttonColors(containerColor = NeonMagenta)
+                        ) { Text("Leave") }
                     } else {
                         OutlinedButton(onClick = {
                             MagicPoi.join(pid) { MagicPoi.refreshState() }
@@ -477,6 +464,39 @@ fun MagicPoiPartiesInline() {
                 else -> MagicPoi.partyState
             }
             Text(stateText, color = NeonYellow, fontSize = 12.sp)
+        }
+
+        // ---- Global Poi Connection on/off (underneath all parties) ----
+        // ON: prime the POIs, start the daemon party (owner) and connect the
+        // relay. OFF: disconnect the relay and stop the party (owner). One
+        // master switch — closer to a power toggle than per-party buttons.
+        val bridgeOn = ServerBridge.running || ServerBridge.connected
+        Button(
+            onClick = {
+                if (bridgeOn) {
+                    if (MagicPoi.joinedIsOwner) MagicPoi.stop { }
+                    ServerBridge.stop { }
+                    PoiState.signalStop { }
+                } else {
+                    PoiState.primeForStreaming { _ ->
+                        if (MagicPoi.joinedIsOwner && MagicPoi.partyState != "playing") {
+                            MagicPoi.start { MagicPoi.partyState = "playing" }
+                        }
+                        ServerBridge.start { }
+                    }
+                }
+            },
+            enabled = MagicPoi.joinedPartyId != null,
+            colors = ButtonDefaults.buttonColors(
+                containerColor = if (bridgeOn) NeonMagenta else Color(0xFF00E676)
+            ),
+            modifier = Modifier.fillMaxWidth().height(52.dp)
+        ) {
+            Text(
+                if (bridgeOn) "Poi Connection: ON — tap to turn OFF"
+                else "Poi Connection: OFF — tap to turn ON",
+                fontWeight = FontWeight.Bold, fontSize = 15.sp
+            )
         }
     }
 }
