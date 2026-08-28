@@ -417,6 +417,17 @@ fun MagicPoiPartiesInline() {
 
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text("Signed in: ${MagicPoi.username}", color = NeonCyan, fontSize = 13.sp)
+        // Global Leave: re-enables Join so a stale UDP session (daemon pruned
+        // us, or relay died in background) can be re-joined fresh.
+        if (MagicPoi.joinedPartyId != null) {
+            Button(
+                onClick = { MagicPoi.leave { MagicPoi.refreshState() } },
+                colors = ButtonDefaults.buttonColors(containerColor = NeonMagenta),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Leave party #${MagicPoi.joinedPartyId} (re-join)")
+            }
+        }
         val arr = parties
         when {
             arr == null -> Text(stat, color = Color.White.copy(alpha = 0.6f), fontSize = 12.sp)

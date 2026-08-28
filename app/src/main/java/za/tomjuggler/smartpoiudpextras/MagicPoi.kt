@@ -265,6 +265,22 @@ object MagicPoi {
         }
     }
 
+    /**
+     * Leave the current party so the user can re-join (e.g. after a stale UDP
+     * session where the daemon pruned the relay client but we still showed
+     * JOINED / hid the Join buttons). Sends UNREG from the registered socket and
+     * clears the local joined-party state, which immediately re-shows the Join
+     * buttons and lets the owner re-join fresh.
+     */
+    fun leave(onResult: (String) -> Unit) {
+        // Stop the relay + send MAGICPOI_UNREG from the same socket (clears the
+        // daemon-side client so it stops streaming / counting us).
+        ServerBridge.stop(onResult)
+        joinedPartyId = null
+        joinedIsOwner = false
+        partyState = "unknown"
+    }
+
     fun refreshState() {
         val id = joinedPartyId ?: return
         CoroutineScope(Dispatchers.IO).launch {
