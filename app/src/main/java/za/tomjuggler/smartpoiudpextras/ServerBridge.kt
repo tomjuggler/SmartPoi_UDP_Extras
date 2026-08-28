@@ -466,37 +466,54 @@ fun MagicPoiPartiesInline() {
             Text(stateText, color = NeonYellow, fontSize = 12.sp)
         }
 
-        // ---- Global Poi Connection on/off (underneath all parties) ----
-        // ON: prime the POIs, start the daemon party (owner) and connect the
-        // relay. OFF: disconnect the relay and stop the party (owner). One
-        // master switch — closer to a power toggle than per-party buttons.
+        // ---- Global START/STOP (owner playback) + Poi Connection on/off ----
+        // Two separate switches, both underneath all parties:
+        //  1) START/STOP — owner starts/stops the daemon party (all POIs play
+        //     or stop together). Disabled for non-owners / until joined.
+        //  2) Poi Connection — connects/disconnects the phone's UDP relay to the
+        //     POIs (primes them + streams server rows). This is the physical
+        //     ON/OFF tie to the hardware.
+        val joined = MagicPoi.joinedPartyId != null
+        val owner = joined && MagicPoi.joinedIsOwner
+        val playing = joined && MagicPoi.partyState == "playing"
         val bridgeOn = ServerBridge.running || ServerBridge.connected
-        Button(
-            onClick = {
-                if (bridgeOn) {
-                    if (MagicPoi.joinedIsOwner) MagicPoi.stop { }
-                    ServerBridge.stop { }
-                    PoiState.signalStop { }
-                } else {
-                    PoiState.primeForStreaming { _ ->
-                        if (MagicPoi.joinedIsOwner && MagicPoi.partyState != "playing") {
-                            MagicPoi.start { MagicPoi.partyState = "playing" }
+
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(
+                onClick = {
+                    if (playing) MagicPoi.stop { MagicPoi.partyState = "ready" }
+                    else MagicPoi.start { MagicPoi.partyState = "playing" }
+                },
+                enabled = owner,
+                modifier = Modifier.weight(1f).height(52.dp)
+            ) {
+                Text(
+                    if (playing) "⏹ STOP" else "▶ START",
+                    fontWeight = FontWeight.Bold, fontSize = 16.sp
+                )
+            }
+            Button(
+                onClick = {
+                    if (bridgeOn) {
+                        ServerBridge.stop { }
+                        PoiState.signalStop { }
+                    } else {
+                        PoiState.primeForStreaming { _ ->
+                            ServerBridge.start { }
                         }
-                        ServerBridge.start { }
                     }
-                }
-            },
-            enabled = MagicPoi.joinedPartyId != null,
-            colors = ButtonDefaults.buttonColors(
-                containerColor = if (bridgeOn) NeonMagenta else Color(0xFF00E676)
-            ),
-            modifier = Modifier.fillMaxWidth().height(52.dp)
-        ) {
-            Text(
-                if (bridgeOn) "Poi Connection: ON — tap to turn OFF"
-                else "Poi Connection: OFF — tap to turn ON",
-                fontWeight = FontWeight.Bold, fontSize = 15.sp
-            )
+                },
+                enabled = joined,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (bridgeOn) NeonMagenta else Color(0xFF00E676)
+                ),
+                modifier = Modifier.weight(1f).height(52.dp)
+            ) {
+                Text(
+                    if (bridgeOn) "Poi Connection: ON" else "Poi Connection: OFF",
+                    fontWeight = FontWeight.Bold, fontSize = 14.sp
+                )
+            }
         }
     }
 }
