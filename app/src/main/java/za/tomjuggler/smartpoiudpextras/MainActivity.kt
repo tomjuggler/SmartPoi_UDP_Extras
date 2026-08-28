@@ -88,7 +88,6 @@ enum class Screen(val title: String, val icon: ImageVector) {
     ZapGame("Zap Game", Icons.Filled.Bolt),
     AudioReactive("Audio Reactive", Icons.Filled.GraphicEq),
     LightSaber("Light Saber", Icons.Filled.Bolt),
-    ServerBridge("Server Bridge", Icons.Filled.Cloud),
     MagicPoiParties("Magic Poi", Icons.Filled.Cloud),
     Settings("Settings", Icons.Filled.Settings)
 }
@@ -114,8 +113,7 @@ fun AppScaffold() {
                 Screen.ZapGame -> ZapGameScreen()
                 Screen.AudioReactive -> AudioReactiveScreen()
                 Screen.LightSaber -> LightSaberScreen()
-                Screen.ServerBridge -> ServerBridgeScreen()
-                Screen.MagicPoiParties -> MagicPoiScreen()
+                Screen.MagicPoiParties -> ServerBridgeScreen()
                 Screen.Settings -> SettingsScreen()
             }
 
@@ -163,9 +161,7 @@ fun HomeMenu(onSelect: (Screen) -> Unit) {
             listOf(NeonYellow, Color(0xFFFF6D00))) { onSelect(Screen.AudioReactive) }
         MenuCard("Light Saber", "Colour triangle saber with swing sounds",
             listOf(Color(0xFF00E676), Color(0xFF00BFA5))) { onSelect(Screen.LightSaber) }
-        MenuCard("Server Bridge", "Relay an LED stream from a network server to the POIs",
-            listOf(Color(0xFF7C4DFF), NeonCyan)) { onSelect(Screen.ServerBridge) }
-        MenuCard("Magic Poi", "Log in, join a party stream, owner starts the show",
+        MenuCard("Magic Poi", "Join a party, bridge the stream to your POIs (login in Settings)",
             listOf(NeonMagenta, Color(0xFF7C4DFF))) { onSelect(Screen.MagicPoiParties) }
         Spacer(Modifier.height(8.dp))
         OutlinedButton(onClick = { PoiState.primeForStreaming { PoiState.statusText = it } }) {

@@ -63,7 +63,6 @@ fun UtilitiesDrawer(
                     Screen.ZapGame,
                     Screen.AudioReactive,
                     Screen.LightSaber,
-                    Screen.ServerBridge,
                     Screen.MagicPoiParties,
                     Screen.Settings
                 ).forEach { s ->

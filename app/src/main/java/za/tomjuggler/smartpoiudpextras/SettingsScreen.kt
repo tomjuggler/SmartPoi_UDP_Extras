@@ -8,10 +8,12 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-/** Global settings: POI IPs, strip size, stream FPS cap, and POI on-board modes 1-6. */
+/** Global settings: POI IPs, strip size, stream FPS cap, Magic Poi login, POI on-board modes. */
 @Composable
 fun SettingsScreen() {
     Column(
@@ -69,6 +71,9 @@ fun SettingsScreen() {
             }
         }
 
+        // ---------------- Magic Poi account (login persists; used by party tab) --
+        MagicPoiAccountSection()
+
         Text("POI on-board modes (patternChooserChange)", color = NeonCyan)
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             listOf("1", "2", "3").forEach { m ->
@@ -99,6 +104,73 @@ fun SettingsScreen() {
             "Priming uses HTTP patternChooserChange (7=LEDs OFF, 0=UDP mode) on port 80.",
             color = Color.White.copy(alpha = 0.5f), fontSize = 12.sp
         )
+    }
+}
+
+/**
+ * Magic Poi login lives here so the party tab never asks for credentials.
+ * Login is persisted (prefs) and refreshed silently when the JWT expires —
+ * the user logs in once, ever.
+ */
+@Composable
+private fun MagicPoiAccountSection() {
+    Text("Magic Poi account", color = NeonCyan)
+    if (MagicPoi.token != null) {
+        Text(
+            "Signed in: ${MagicPoi.username}",
+            color = Color(0xFF00E676), fontSize = 14.sp, fontWeight = FontWeight.Medium
+        )
+        Text(
+            "Join parties on the Magic Poi tab — no need to log in again.",
+            color = Color.White.copy(alpha = 0.55f), fontSize = 12.sp
+        )
+        OutlinedButton(onClick = { MagicPoi.logout() }) {
+            Text("Log out")
+        }
+    } else {
+        var user by remember { mutableStateOf("") }
+        var pass by remember { mutableStateOf("") }
+        var stat by remember { mutableStateOf("") }
+        var busy by remember { mutableStateOf(false) }
+
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            // feedback line FIRST (never below a fillMaxSize child — off-screen bug)
+            if (stat.isNotEmpty()) Text(stat, color = NeonYellow, fontSize = 13.sp)
+            OutlinedTextField(
+                value = MagicPoi.baseUrl,
+                onValueChange = { MagicPoi.baseUrl = it.trim() },
+                label = { Text("Server address (https://…)") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+            OutlinedTextField(
+                value = user,
+                onValueChange = { user = it },
+                label = { Text("Username") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+            OutlinedTextField(
+                value = pass,
+                onValueChange = { pass = it },
+                label = { Text("Password") },
+                singleLine = true,
+                visualTransformation = PasswordVisualTransformation(),
+                modifier = Modifier.fillMaxWidth()
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Button(onClick = {
+                    if (user.isBlank() || pass.isBlank()) { stat = "Enter username and password"; return@Button }
+                    busy = true
+                    MagicPoi.signupOrLogin(false, user, pass) { busy = false; stat = it }
+                }, enabled = !busy) { Text("Log in") }
+                OutlinedButton(onClick = {
+                    if (user.isBlank() || pass.isBlank()) { stat = "Enter username and password"; return@OutlinedButton }
+                    busy = true
+                    MagicPoi.signupOrLogin(true, user, pass) { busy = false; stat = it }
+                }, enabled = !busy) { Text("Sign up") }
+            }
+        }
     }
 }
 

@@ -47,9 +47,9 @@ object ServerBridge {
     /** Frame rate the server actually assigned us (from REG_OK reply). */
     var serverFps by mutableStateOf(0f)
 
-    // --- Magic Poi party mode (udp_upgrade): set by MagicPoi.join() ---
+    // --- Magic Poi party mode: set by MagicPoi.join(); this is the DEFAULT now ---
     /** true = relay from magicpoi-streamd with MAGICPOI_* protocol. */
-    var magicPoiMode by mutableStateOf(false)
+    var magicPoiMode by mutableStateOf(true)
     var magicPoiHost by mutableStateOf("")
     var magicPoiUdpPort by mutableStateOf(2393)
     /** Daemon-side party state: idle / ready (cylon) / playing. */
@@ -284,13 +284,21 @@ fun ServerBridgeScreen() {
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         Text(
-            "Use the phone as a bridge: a stream SERVER sends LED rows over the " +
-            "network, this app relays them byte-for-byte to the POIs. Same pixel " +
-            "protocol as Computer Generated (one row per UDP message, paced).",
+            "Magic Poi parties: join a party, turn the bridge ON, and the POIs " +
+            "show the party stream. The phone relays server LED rows to the POIs " +
+            "byte-for-byte (one row per UDP message, paced).",
             color = Color.White.copy(alpha = 0.7f), fontSize = 14.sp
         )
 
-        // --- mode: Magic Poi party (auth) or legacy server (no auth) ---------
+        // Login moved to Settings — point there instead of embedding a form.
+        if (MagicPoi.token == null) {
+            Text(
+                "Log in on the Settings tab first (one time — it's remembered).",
+                color = NeonMagenta, fontSize = 14.sp
+            )
+        }
+
+        // --- mode: Magic Poi party (default) or standalone stream server ------
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             FilterChip(
                 selected = ServerBridge.magicPoiMode,
@@ -300,17 +308,16 @@ fun ServerBridgeScreen() {
             FilterChip(
                 selected = !ServerBridge.magicPoiMode,
                 onClick = { ServerBridge.magicPoiMode = false },
-                label = { Text("Legacy server") }
+                label = { Text("Stream server (LAN)") }
             )
         }
 
         if (ServerBridge.magicPoiMode) {
             Text(
                 "Party: " + (MagicPoi.joinedPartyId?.let { "#$it (${MagicPoi.partyState})" }
-                    ?: "none — join one below"),
+                    ?: "none — join below"),
                 color = NeonYellow, fontSize = 14.sp, fontWeight = FontWeight.Medium
             )
-            // Reuse the Magic Poi auth/party UI inline (compact form)
             MagicPoiPartiesInline()
         } else {
             Text("Server address", color = NeonCyan)
@@ -394,11 +401,11 @@ fun ServerBridgeScreen() {
     }
 }
 
-/** Compact auth + party list shown inside the bridge's Magic Poi mode. */
+/** Compact party list shown inside the bridge's Magic Poi mode. Login is on Settings. */
 @Composable
 fun MagicPoiPartiesInline() {
     if (MagicPoi.token == null) {
-        Text("Log in / sign up in the Magic Poi tab first.", color = NeonMagenta, fontSize = 13.sp)
+        Text("Log in on the Settings tab first.", color = NeonMagenta, fontSize = 13.sp)
         return
     }
     var parties by remember { mutableStateOf<JSONArray?>(null) }
