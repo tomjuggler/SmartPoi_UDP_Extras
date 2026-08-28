@@ -308,7 +308,7 @@ fun ServerBridgeScreen() {
             FilterChip(
                 selected = !ServerBridge.magicPoiMode,
                 onClick = { ServerBridge.magicPoiMode = false },
-                label = { Text("Stream server (LAN)") }
+                label = { Text("Test Stream") }
             )
         }
 

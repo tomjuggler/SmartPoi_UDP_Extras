@@ -159,12 +159,13 @@ object MagicPoi {
 
     // ------------------------------------------------------ API calls ----
 
-    fun signupOrLogin(signup: Boolean, user: String, pass: String, onResult: (String) -> Unit) {
+    /** Log in only. Sign-up happens on the web (magicpoi.com/auth) — it needs an
+     *  invitation code; the API /api/stream/signup must not be used from the app. */
+    fun login(user: String, pass: String, onResult: (String) -> Unit) {
         CoroutineScope(Dispatchers.IO).launch {
             try {
-                val path = if (signup) "/api/stream/signup" else "/api/login"
                 val body = JSONObject().put("username", user.trim()).put("password", pass)
-                val resp = post(path, body, auth = false)
+                val resp = post("/api/login", body, auth = false)
                 token = resp.optString("token", "").ifEmpty { null }
                 username = resp.optString("username", user.trim()).ifEmpty { user.trim() }
                 password = pass            // persist for silent re-login later

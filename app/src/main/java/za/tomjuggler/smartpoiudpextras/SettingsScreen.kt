@@ -1,5 +1,7 @@
 package za.tomjuggler.smartpoiudpextras
 
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -8,6 +10,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
@@ -132,6 +135,7 @@ private fun MagicPoiAccountSection() {
         var pass by remember { mutableStateOf("") }
         var stat by remember { mutableStateOf("") }
         var busy by remember { mutableStateOf(false) }
+        val ctx = LocalContext.current
 
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             // feedback line FIRST (never below a fillMaxSize child — off-screen bug)
@@ -162,14 +166,23 @@ private fun MagicPoiAccountSection() {
                 Button(onClick = {
                     if (user.isBlank() || pass.isBlank()) { stat = "Enter username and password"; return@Button }
                     busy = true
-                    MagicPoi.signupOrLogin(false, user, pass) { busy = false; stat = it }
+                    MagicPoi.login(user, pass) { busy = false; stat = it }
                 }, enabled = !busy) { Text("Log in") }
+                // Sign-up needs an invitation code — that only happens on the web
+                // site (magicpoi.com/auth). This opens it in the browser; the API
+                // /api/stream/signup must NOT be used here (it accepts any string).
                 OutlinedButton(onClick = {
-                    if (user.isBlank() || pass.isBlank()) { stat = "Enter username and password"; return@OutlinedButton }
-                    busy = true
-                    MagicPoi.signupOrLogin(true, user, pass) { busy = false; stat = it }
-                }, enabled = !busy) { Text("Sign up") }
+                    try {
+                        ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://magicpoi.com/auth/")))
+                    } catch (e: Exception) {
+                        stat = "No browser available: ${e.message}"
+                    }
+                }) { Text("Sign Up") }
             }
+            Text(
+                "Don't have an account yet? Sign Up (opens magicpoi.com — you'll need an invitation code).",
+                color = Color.White.copy(alpha = 0.5f), fontSize = 12.sp
+            )
         }
     }
 }
