@@ -237,8 +237,17 @@ object MagicPoi {
                 joinedPartyId = resp.optInt("party_id")
                 joinedIsOwner = resp.optBoolean("is_owner")
                 partyState = resp.optString("state", "ready")
-                withContext(Dispatchers.Main) {
-                    onResult("Joined — UDP ${ServerBridge.magicPoiHost}:${ServerBridge.magicPoiUdpPort}")
+                // Joining = connecting: prime the POIs (LEDs OFF -> UDP MODE ON)
+                // then start the relay so the party stream flows to them.
+                CoroutineScope(Dispatchers.Main).launch {
+                    onResult("Connected — priming POIs…")
+                }
+                PoiState.primeForStreaming { pmsg ->
+                    ServerBridge.start { relayMsg ->
+                        CoroutineScope(Dispatchers.Main).launch {
+                            onResult("Joined — $relayMsg ($pmsg)")
+                        }
+                    }
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) { onResult("Join failed — ${e.message}") }
@@ -279,11 +288,14 @@ object MagicPoi {
      */
     fun leave(onResult: (String) -> Unit) {
         // Stop the relay + send MAGICPOI_UNREG from the same socket (clears the
-        // daemon-side client so it stops streaming / counting us).
-        ServerBridge.stop(onResult)
+        // daemon-side client so it stops streaming / counting us), then turn the
+        // POI LEDs off. Leaving = disconnecting entirely.
+        ServerBridge.stop { }
+        PoiState.signalStop { }
         joinedPartyId = null
         joinedIsOwner = false
         partyState = "unknown"
+        onResult("Left party — POIs off")
     }
 
     fun refreshState() {
