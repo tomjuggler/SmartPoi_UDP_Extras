@@ -55,10 +55,154 @@ object ServerBridge {
     /** Daemon-side party state: idle / ready (cylon) / playing. */
     var magicPoiPartyState by mutableStateOf("unknown")
 
-    private var rxThread: Thread? = null
+    /** True while at least one size-group relay is running. */
     @Volatile var running = false
         private set
-    private var socket: DatagramSocket? = null
+
+    // --- multi-size streaming: ONE relay stream per distinct POI size ---------
+    // Each relay owns its own DatagramSocket + MAGICPOI_REG with its own size,
+    // so the daemon fans a separate sized feed per group (server keys clients
+    // by addr:port; every distinct size = one registered client).
+
+    private class StreamRelay(
+        val size: Int,
+        val ips: List<String>,
+        val magicPoi: Boolean,
+        val host: String,
+        val port: Int,
+        val partyId: Int?,
+        /** Owner fps flag goes on the FIRST registration only (one voice). */
+        val ownerFlag: Boolean,
+    ) {
+        var thread: Thread? = null
+        var socket: DatagramSocket? = null
+        @Volatile var running = false
+        @Volatile var connected = false
+        val relayed = java.util.concurrent.atomic.AtomicLong(0)
+
+        fun start(onStatus: (String) -> Unit) {
+            running = true
+            val t = Thread {
+                try {
+                    val addr = InetAddress.getByName(host)
+                    val s = DatagramSocket()
+                    s.soTimeout = 1500
+                    socket = s
+
+                    val px = size.coerceIn(16, 120)
+                    val fps = PoiState.fpsCap.coerceIn(0.5f, 60f)
+                    val regMsg = if (magicPoi) {
+                        val owner = if (ownerFlag) ",\"owner\":true" else ""
+                        "$MP_REG_MSG {\"party\":$partyId,\"size\":$px,\"fps\":$fps$owner}"
+                    } else {
+                        "$REG_MSG {\"size\":$px,\"fps\":$fps}"
+                    }.toByteArray()
+
+                    var registered = false
+                    outer@ for (attempt in 1..3) {
+                        s.send(DatagramPacket(regMsg, regMsg.size, addr, port))
+                        try {
+                            var tries = 0
+                            while (tries < 8) {   // reply may race stream packets
+                                tries++
+                                val buf = ByteArray(256)
+                                val rp = DatagramPacket(buf, buf.size)
+                                s.receive(rp)
+                                val reply = String(buf, 0, rp.length)
+                                val okPrefix = if (magicPoi) MP_REG_OK_PREFIX else REG_OK_PREFIX
+                                if (reply.startsWith(okPrefix)) {
+                                    // every relay of a party gets the same fps back
+                                    ServerBridge.serverFps = reply.substringAfter("fps=", "")
+                                        .trim().toFloatOrNull() ?: ServerBridge.serverFps
+                                    if (magicPoi) {
+                                        ServerBridge.magicPoiPartyState = reply
+                                            .substringAfter("state=", "").trim()
+                                            .substringBefore(" ").trim()
+                                    }
+                                    registered = true
+                                    break@outer
+                                }
+                                // else: stream datagram — keep draining
+                            }
+                        } catch (_: SocketTimeoutException) {}
+                    }
+                    if (!registered) {
+                        onStatus("[$px px] No reply from server $host:$port — check IP / firewall")
+                        running = false
+                        return@Thread
+                    }
+                    connected = true
+
+                    val buf = ByteArray(1024)
+                    val rx = DatagramPacket(buf, buf.size)
+                    var lastPacketAt = System.currentTimeMillis()
+                    var lastPingAt = 0L
+                    while (running) {
+                        val now = System.currentTimeMillis()
+                        // per-relay keepalive: each socket is an independent client —
+                        // a shared ping would NOT keep the other sizes alive (15s prune)
+                        if (now - lastPingAt > PING_INTERVAL_MS) {
+                            lastPingAt = now
+                            try {
+                                val ping = (if (magicPoi)
+                                    "$MP_PING_MSG {\"party\":$partyId}"
+                                else PING_MSG).toByteArray()
+                                s.send(DatagramPacket(ping, ping.size, addr, port))
+                            } catch (_: Exception) {}
+                        }
+                        try {
+                            s.receive(rx)
+                            lastPacketAt = System.currentTimeMillis()
+                            val payload = ByteArray(rx.length)
+                            System.arraycopy(rx.data, rx.offset, payload, 0, rx.length)
+                            PoiState.sendRowTo(ips, payload)
+                            relayed.incrementAndGet()
+                            ServerBridge.packetsRelayed =
+                                ServerBridge.streams.sumOf { it.relayed.get() }
+                        } catch (_: SocketTimeoutException) {
+                            if (running && System.currentTimeMillis() - lastPacketAt > 4000) {
+                                onStatus("[$px px] No packets from server for 4s… still listening")
+                                lastPacketAt = System.currentTimeMillis()
+                            }
+                        } catch (e: Exception) {
+                            if (running) onStatus("[$px px] Relay error: ${e.message}")
+                        }
+                    }
+                } catch (e: Exception) {
+                    if (running) onStatus("[${size} px] Relay stopped: ${e.message}")
+                } finally {
+                    connected = false
+                    running = false
+                    ServerBridge.recomputeConnected()
+                }
+            }.apply { name = "smartpoi-bridge-${size}px"; isDaemon = true }
+            thread = t
+            t.start()
+        }
+
+        /** UNREG from the SAME socket that registered, then close. */
+        fun stop() {
+            running = false
+            val s = socket
+            if (s != null && !s.isClosed) {
+                try {
+                    val msg = (if (magicPoi && partyId != null)
+                        "$MP_UNREG_MSG {\"party\":$partyId}"
+                    else UNREG_MSG).toByteArray()
+                    s.send(DatagramPacket(msg, msg.size, InetAddress.getByName(host), port))
+                } catch (_: Exception) {}
+            }
+            try { s?.close() } catch (_: Exception) {}
+            socket = null
+        }
+    }
+
+    private val streams = java.util.concurrent.CopyOnWriteArrayList<StreamRelay>()
+
+    private fun recomputeConnected() {
+        connected = streams.any { it.connected }
+    }
+
 
     const val REG_MSG = "SMARTPOI_REG"
     const val REG_OK_PREFIX = "SMARTPOI_REG_OK"
@@ -104,19 +248,13 @@ object ServerBridge {
     }
 
     /**
-     * Relay loop. Binds an ephemeral local port, sends REGISTER from THAT socket,
-     * then keeps receiving on it — so the server's stream flows back to the same
-     * address:port (pinhole stays open, works across routers too).
-     *
-     * Two modes:
-     *  - legacy (default): SMARTPOI_* protocol to the old Flask server
-     *  - Magic Poi party (magicPoiMode): MAGICPOI_* protocol to magicpoi-streamd,
-     *    host/port from the join API. state=ready means the idle cylon is
-     *    flowing ("waiting for start"); the owner STARTs from the Magic Poi tab.
+     * Multi-size relay. Groups the configured POIs by their per-POI size
+     * (PoiState.sizeAt — detected via /get-pixels, falls back to the global
+     * Settings default) and starts ONE StreamRelay per distinct size, each with
+     * its own socket + REG. The daemon streams a separate sized feed per group.
      */
     fun start(onStatus: (String) -> Unit) {
         if (running) return
-        packetsRelayed = 0
         val mp = magicPoiMode
         val host = if (mp) magicPoiHost else serverIp
         val port = if (mp) magicPoiUdpPort else udpPort
@@ -125,150 +263,57 @@ object ServerBridge {
             onStatus("Join a party in the Magic Poi tab first")
             return
         }
-        try {
-            val s = DatagramSocket()
-            s.soTimeout = 1500   // poll so we can exit promptly and report staleness
-            socket = s
 
-            running = true
-            rxThread = Thread {
-                try {
-                    val addr = InetAddress.getByName(host)
+        // Group configured POI slots by effective size.
+        val groups = LinkedHashMap<Int, MutableList<String>>()
+        for (i in PoiState.poiIndices()) {
+            groups.getOrPut(PoiState.sizeAt(i)) { mutableListOf() }.add(PoiState.poiIps[i])
+        }
+        if (groups.isEmpty()) {
+            onStatus("No POI IPs configured — add them in Settings")
+            return
+        }
 
-                    // Declare our pixel size (Settings is the single source of
-                    // truth). OWNER's phone also sets the PARTY playback fps
-                    // from its Settings fps cap (daemon: owner REG wins).
-                    val px = PoiState.pixelSize.coerceIn(16, 120)
-                    val fps = PoiState.fpsCap.coerceIn(0.5f, 60f)
-                    val regMsg = if (mp) {
-                        val ownerFlag = if (MagicPoi.joinedIsOwner) ",\"owner\":true" else ""
-                        "$MP_REG_MSG {\"party\":$partyId,\"size\":$px,\"fps\":$fps$ownerFlag}"
-                    } else {
-                        "$REG_MSG {\"size\":$px,\"fps\":$fps}"
-                    }.toByteArray()
-                    var registered = false
-                    outer@ for (attempt in 1..3) {
-                        s.send(DatagramPacket(regMsg, regMsg.size, addr, port))
-                        try {
-                            var tries = 0
-                            while (tries < 8) {   // reply may race stream packets
-                                tries++
-                                val buf = ByteArray(256)
-                                val rp = DatagramPacket(buf, buf.size)
-                                s.receive(rp)
-                                val reply = String(buf, 0, rp.length)
-                                val okPrefix = if (mp) MP_REG_OK_PREFIX else REG_OK_PREFIX
-                                if (reply.startsWith(okPrefix)) {
-                                    if (mp) {
-                                        // "MAGICPOI_REG_OK party=7 state=ready fps=5.00"
-                                        magicPoiPartyState = reply
-                                            .substringAfter("state=", "").trim()
-                                            .substringBefore(" ").trim()
-                                        serverFps = reply.substringAfter("fps=", "")
-                                            .trim().toFloatOrNull() ?: 0f
-                                    } else {
-                                        // "SMARTPOI_REG_OK fps=10.00"
-                                        serverFps = reply.substringAfter("fps=", "")
-                                            .trim().toFloatOrNull() ?: fps
-                                    }
-                                    registered = true
-                                    break@outer
-                                }
-                                // else: stream datagram — keep draining
-                            }
-                        } catch (_: SocketTimeoutException) {}
-                    }
-                    if (!registered) {
-                        onStatus("No reply from server $host:$port — check IP / firewall")
-                        running = false
-                        return@Thread
-                    }
-                    connected = true
-                    val mode = if (mp) "Magic Poi party #$partyId" else "legacy server"
-                    val stateNote = if (mp && magicPoiPartyState == "ready")
-                        " — waiting for start (cylon)" else ""
-                    onStatus("Bridging $host → ${PoiState.ip1}/${PoiState.ip2} " +
-                        "· $mode · ${px}px$stateNote")
+        packetsRelayed = 0
+        running = true
+        val sizes = groups.keys.toList()
+        val mode = if (mp) "Magic Poi party #$partyId" else "legacy server"
+        onStatus(
+            "Bridging $host → ${PoiState.configuredIps().joinToString("/")} · $mode · " +
+                sizes.joinToString("+") { "${it}px×${groups[it]!!.size}" }
+        )
 
-                    // pre-allocate once — no allocation in the hot loop (GC pause note
-                    // in the research chat). One received datagram = one row.
-                    val buf = ByteArray(1024)
-                    val rx = DatagramPacket(buf, buf.size)
-                    var lastPacketAt = System.currentTimeMillis()
-                    var lastPingAt = 0L
-                    while (running) {
-                        val now = System.currentTimeMillis()
-                        // keepalive so the server doesn't prune us as a silent client
-                        if (now - lastPingAt > PING_INTERVAL_MS) {
-                            lastPingAt = now
-                            try {
-                                val ping = (if (mp)
-                                    "$MP_PING_MSG {\"party\":$partyId}"
-                                else PING_MSG).toByteArray()
-                                s.send(DatagramPacket(ping, ping.size, addr, port))
-                            } catch (_: Exception) {}
-                        }
-                        try {
-                            s.receive(rx)
-                            lastPacketAt = System.currentTimeMillis()
-                            // copy into a right-sized array; DatagramPacket reuse would
-                            // otherwise let the next receive overwrite the sent bytes
-                            val payload = ByteArray(rx.length)
-                            System.arraycopy(rx.data, rx.offset, payload, 0, rx.length)
-                            PoiState.sendRowTo(listOf(PoiState.ip1, PoiState.ip2), payload)
-                            packetsRelayed++
-                        } catch (_: SocketTimeoutException) {
-                            if (running && System.currentTimeMillis() - lastPacketAt > 4000) {
-                                onStatus("No packets from server for 4s… still listening")
-                                lastPacketAt = System.currentTimeMillis() // report once per gap
-                            }
-                        } catch (e: Exception) {
-                            if (running) onStatus("Relay error: ${e.message}")
-                        }
-                    }
-                } catch (e: Exception) {
-                    if (running) onStatus("Relay stopped: ${e.message}")
-                } finally {
-                    connected = false
-                    running = false
-                }
-            }.apply { name = "smartpoi-bridge-rx"; isDaemon = true }
-            rxThread!!.start()
-        } catch (e: Exception) {
-            running = false
-            onStatus("Start failed: ${e.message}")
+        // Start every size group; the OWNER fps flag rides on the first REG only
+        // (owner sets the party rate once — N owner REGs would race each other).
+        var first = true
+        for ((px, ips) in groups) {
+            val relay = StreamRelay(
+                size = px,
+                ips = ips,
+                magicPoi = mp,
+                host = host,
+                port = port,
+                partyId = partyId,
+                ownerFlag = first && MagicPoi.joinedIsOwner,
+            )
+            streams.add(relay)
+            relay.start(onStatus)
+            first = false
         }
     }
 
     /**
-     * Leave the stream: UNREG datagram must go out from the SAME socket we
-     * registered with (the server identifies clients by source address:port).
-     * The server stops generating only when the last client is gone and resets
-     * its frame rate. /api/stop stays as a manual master kill.
+     * Leave the stream: UNREG from EACH registered socket (the server keys
+     * clients by source addr:port, so every size group must leave itself).
      */
     fun stop(onStatus: (String) -> Unit) {
-        val s = socket
         running = false
         connected = false
-        if (s != null && !s.isClosed) {
-            try {
-                val partyId = MagicPoi.joinedPartyId
-                val msg = (if (magicPoiMode && partyId != null)
-                    "$MP_UNREG_MSG {\"party\":$partyId}"
-                else UNREG_MSG).toByteArray()
-                val host = if (magicPoiMode) magicPoiHost else serverIp
-                val port = if (magicPoiMode) magicPoiUdpPort else udpPort
-                s.send(DatagramPacket(msg, msg.size,
-                    InetAddress.getByName(host), port))
-                onStatus("Left stream ($packetsRelayed packets relayed)")
-            } catch (e: Exception) {
-                onStatus("Unregister error: ${e.message} ($packetsRelayed relayed)")
-            }
-        } else {
-            onStatus("Left stream ($packetsRelayed packets relayed)")
-        }
-        try { socket?.close() } catch (_: Exception) {}
-        socket = null
+        val total = packetsRelayed
+        val relays = streams.toList()
+        streams.clear()
+        for (r in relays) r.stop()
+        onStatus("Left stream ($total packets relayed)")
     }
 }
 
@@ -355,12 +400,16 @@ fun ServerBridgeScreen() {
 
         // --- RESPONSIVE: stream parameters come from Settings (read-only here) --
         Text(
-            "LED strip size in Settings sets your pixel size (the server " +
-            "downscales the party master frame to your size, max 120).",
+            "Each POI gets its own stream at its own LED size (auto-detected via " +
+            "/get-pixels, falling back to the Settings default, max 120).",
             color = Color.White.copy(alpha = 0.55f), fontSize = 12.sp
         )
+        val sizeSummary = PoiState.poiIndices()
+            .map { "${PoiState.sizeAt(it)}px" }
+            .distinct()
+            .joinToString(" + ")
         Text(
-            "Will request: ${PoiState.pixelSize}px",
+            "Will request: $sizeSummary",
             color = NeonYellow, fontSize = 14.sp, fontWeight = FontWeight.Medium
         )
         if (ServerBridge.serverFps > 0f) {
@@ -399,7 +448,7 @@ fun ServerBridgeScreen() {
 
         Text(stat, color = NeonYellow, fontSize = 13.sp)
         Text(
-            "Relayed: ${ServerBridge.packetsRelayed} pkts  ·  POIs ${PoiState.ip1} / ${PoiState.ip2}",
+            "Relayed: ${ServerBridge.packetsRelayed} pkts  ·  POIs ${PoiState.configuredIps().joinToString(" / ")}",
             color = NeonCyan, fontSize = 12.sp, fontWeight = FontWeight.Medium
         )
     }

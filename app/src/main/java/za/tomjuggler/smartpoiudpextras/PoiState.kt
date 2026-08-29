@@ -29,6 +29,13 @@ object PoiState {
     val poiIps = mutableStateListOf(
         "192.168.1.1", "192.168.1.78", "", "", "", "", "", ""
     )
+
+    /**
+     * Per-POI LED strip size (NUM_PX) as reported by the device's HTTP API
+     * (GET /get-pixels — same endpoint the Cordova SmartPoi_Controls app uses).
+     * 0 = not detected yet → that POI falls back to [pixelSize].
+     */
+    val poiSizes = mutableStateListOf(0, 0, 0, 0, 0, 0, 0, 0)
     var pixelSize by mutableStateOf(60)
     var statusText by mutableStateOf("Ready")
     /** Max frames per second for streaming loops. */
@@ -65,13 +72,80 @@ object PoiState {
     fun configuredIps(): List<String> =
         poiIps.filter { it.isNotBlank() && it != "0.0.0.0" && isValidIp(it) }
 
+    /**
+     * Effective streaming size for the POI at [index]: its detected NUM_PX when
+     * known, else the global [pixelSize] default. Clamped to the daemon cap.
+     */
+    fun sizeAt(index: Int): Int =
+        (poiSizes.getOrNull(index)?.takeIf { it in 16..120 } ?: pixelSize).coerceIn(16, 120)
+
+    /** First detected size across configured POIs (for display); 0 when none detected. */
+    fun anyDetectedSize(): Int = poiIndices().firstNotNullOfOrNull { poiSizes[it] } ?: 0
+
+    /** Indices of POI slots that have a valid IP (0-based). */
+    fun poiIndices(): List<Int> =
+        poiIps.indices.filter { poiIps[it].isNotBlank() && poiIps[it] != "0.0.0.0" && isValidIp(poiIps[it]) }
+
+    /**
+     * Query one POI's LED count via GET /get-pixels (firmware returns NUM_PX as
+     * plain text — the same endpoint SmartPoi_Controls uses). Returns null on
+     * any failure (POI offline, old firmware, timeout).
+     */
+    fun fetchPoiSize(ip: String, onResult: (Int?) -> Unit) {
+        CoroutineScope(Dispatchers.IO).launch {
+            var conn: HttpURLConnection? = null
+            val size = try {
+                conn = URL("http://$ip/get-pixels").openConnection() as HttpURLConnection
+                conn.connectTimeout = 1200
+                conn.readTimeout = 1200
+                if (conn.responseCode in 200..299)
+                    conn.inputStream.bufferedReader().use { it.readText().trim().toIntOrNull() }
+                else null
+            } catch (_: Exception) {
+                null
+            } finally {
+                try { conn?.disconnect() } catch (_: Exception) {}
+            }
+            onResult(size)
+        }
+    }
+
+    /**
+     * Detect sizes for every configured POI that doesn't have one yet (or all
+     * when [force]). Fills [poiSizes] as answers arrive.
+     */
+    fun detectPoiSizes(force: Boolean = false, onProgress: (String) -> Unit = {}) {
+        val targets = poiIndices().filter { force || poiSizes[it] !in 16..120 }
+        if (targets.isEmpty()) {
+            onProgress(if (poiSizes.any { it in 16..120 }) "Sizes already detected" else "No POIs to probe")
+            return
+        }
+        onProgress("Probing ${targets.size} POI(s)…")
+        var done = 0
+        for (i in targets) {
+            fetchPoiSize(poiIps[i]) { size ->
+                if (size != null && size in 1..1000) {
+                    poiSizes[i] = size.coerceIn(16, 120)
+                    onProgress("POI ${i + 1} (${poiIps[i]}): ${poiSizes[i]}px")
+                } else {
+                    onProgress("POI ${i + 1} (${poiIps[i]}): size unknown — using ${pixelSize}px default")
+                }
+                done++
+                if (done == targets.size) onProgress("Size detection done (${targets.size} probed)")
+            }
+        }
+    }
+
     /** IP at 0-based [index], or "" when out of range. */
     fun ipAt(index: Int): String = if (index in poiIps.indices) poiIps[index] else ""
 
-    /** Set one POI IP (0-based) and invalidate the DNS cache. */
+    /** Set one POI IP (0-based), invalidate the DNS cache, and drop a stale
+     *  detected size — a new IP may be a different device with a different strip. */
     fun setPoiIp(index: Int, ip: String) {
         if (index in poiIps.indices) {
+            val changed = poiIps[index].trim() != ip.trim()
             poiIps[index] = ip.trim()
+            if (changed) poiSizes[index] = 0
             clearAddressCache()
         }
     }
@@ -366,6 +440,8 @@ object PoiState {
                 i == 0 && old1 != null -> poiIps[i] = old1
                 i == 1 && old2 != null -> poiIps[i] = old2
             }
+            // per-POI detected size (0 = unknown → global default is used)
+            poiSizes[i] = p.getInt("poiSize$i", 0)
         }
         pixelSize = p.getInt("px", pixelSize)
         // fpsCap may be stored as Int (old builds) or Float (current) — accept both
@@ -385,7 +461,10 @@ object PoiState {
     fun save(ctx: Context) {
         val e = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
         e.putString("routerIp", routerIp)
-        for (i in poiIps.indices) e.putString("poi$i", poiIps[i])
+        for (i in poiIps.indices) {
+            e.putString("poi$i", poiIps[i])
+            e.putInt("poiSize$i", poiSizes[i])
+        }
         e.putInt("px", pixelSize)
         e.putFloat("fpsCap", fpsCap)
         e.putInt("packetRepeat", packetRepeat)

@@ -52,7 +52,7 @@ fun ZapGameScreen() {
         activeJob?.cancel()
         activePoi = poi
         activeJob = scope.launch {
-            val ip = if (poi == 1) PoiState.ip1 else PoiState.ip2
+            val ip = PoiState.ipAt(poi - 1)
             val zapColor = (if (poi == 1) Color(255, 0, 255) else Color(0, 255, 255)).toArgbInt()
             for (pos in 0 until size) {
                 zapPos = pos
@@ -85,7 +85,7 @@ fun ZapGameScreen() {
             horizontalArrangement = Arrangement.spacedBy(14.dp)
         ) {
             ZapSquare(
-                label = "POI 1\n${PoiState.ip1}",
+                label = "POI 1\n${PoiState.ipAt(0)}",
                 color = Color(255, 0, 255),
                 active = activePoi == 1,
                 progress = if (activePoi == 1) zapPos.toFloat() / size else 0f,
@@ -93,7 +93,7 @@ fun ZapGameScreen() {
             ) { runZap(1) }
 
             ZapSquare(
-                label = "POI 2\n${PoiState.ip2}",
+                label = "POI 2\n${PoiState.ipAt(1)}",
                 color = Color(0, 255, 255),
                 active = activePoi == 2,
                 progress = if (activePoi == 2) zapPos.toFloat() / size else 0f,

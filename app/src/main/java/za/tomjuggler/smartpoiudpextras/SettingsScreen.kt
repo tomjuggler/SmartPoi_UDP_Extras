@@ -88,12 +88,13 @@ fun SettingsScreen() {
         }
 
         // 8 POI slots in a compact 2-column grid; empty slots are simply skipped.
+        // Label shows the per-POI detected LED size (via /get-pixels) when known.
         for (pair in 0 until PoiState.MAX_POIS step 2) {
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 OutlinedTextField(
                     value = PoiState.poiIps[pair],
                     onValueChange = { PoiState.setPoiIp(pair, it) },
-                    label = { Text("POI ${pair + 1}") },
+                    label = { Text(poiLabel(pair)) },
                     singleLine = true,
                     modifier = Modifier.weight(1f)
                 )
@@ -101,7 +102,7 @@ fun SettingsScreen() {
                     OutlinedTextField(
                         value = PoiState.poiIps[pair + 1],
                         onValueChange = { PoiState.setPoiIp(pair + 1, it) },
-                        label = { Text("POI ${pair + 2}") },
+                        label = { Text(poiLabel(pair + 1)) },
                         singleLine = true,
                         modifier = Modifier.weight(1f)
                     )
@@ -113,7 +114,30 @@ fun SettingsScreen() {
             color = Color.White.copy(alpha = 0.5f), fontSize = 12.sp
         )
 
-        Text("Default LED strip size", color = NeonCyan)
+        // Per-POI LED size detection (firmware GET /get-pixels, as in the Cordova
+        // SmartPoi_Controls app). Detected sizes persist per POI and drive the
+        // multi-size party streams (one sized feed per distinct size).
+        var sizeMsg by remember { mutableStateOf("") }
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Button(
+                onClick = {
+                    PoiState.detectPoiSizes(force = true) { sizeMsg = it }
+                },
+                enabled = PoiState.poiIndices().isNotEmpty()
+            ) { Text("Detect POI sizes") }
+            if (sizeMsg.isNotEmpty()) {
+                Text(sizeMsg, color = NeonYellow, fontSize = 13.sp)
+            }
+        }
+        Text(
+            "Auto-detected: " + (
+                PoiState.poiIndices().map { i -> "POI ${i + 1}: ${PoiState.poiSizes[i]}px" }
+                    .joinToString(", ").ifEmpty { "none yet" }
+                ),
+            color = Color.White.copy(alpha = 0.5f), fontSize = 12.sp
+        )
+
+        Text("Default LED strip size (fallback when a POI's size wasn't detected)", color = NeonCyan)
         SizeSelector(PoiState.pixelSize) { }
 
         Text("Stream frame-rate cap (0.5 – 10.0 fps)", color = NeonCyan)
@@ -279,6 +303,12 @@ private fun MagicPoiAccountSection() {
             )
         }
     }
+}
+
+/** Settings field label: POI number + detected LED size when known. */
+private fun poiLabel(index: Int): String {
+    val sz = PoiState.poiSizes[index]
+    return "POI ${index + 1}" + if (sz in 16..120) " (${sz}px)" else ""
 }
 
 private fun sendMode(m: String) {

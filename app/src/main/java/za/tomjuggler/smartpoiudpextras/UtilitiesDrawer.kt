@@ -16,6 +16,7 @@ import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
@@ -92,8 +93,30 @@ fun UtilitiesDrawer(
                         color = NeonCyan, fontSize = 14.sp,
                         fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
                     )
-                    Text("POI 1: ${PoiState.ip1}", color = Color.White.copy(alpha = 0.7f), fontSize = 13.sp)
-                    Text("POI 2: ${PoiState.ip2}", color = Color.White.copy(alpha = 0.7f), fontSize = 13.sp)
+            if (PoiState.configuredIps().isEmpty()) {
+                Text("No POIs configured", color = Color.White.copy(alpha = 0.7f), fontSize = 13.sp)
+            } else {
+                PoiState.poiIps.forEachIndexed { index, ip ->
+                    if (PoiState.isValidIp(ip)) {
+                        val sz = PoiState.poiSizes[index]
+                        Text(
+                            "POI ${index + 1}: $ip" + if (sz in 16..120) "  ·  ${sz}px" else "",
+                            color = Color.White.copy(alpha = 0.7f), fontSize = 13.sp
+                        )
+                    }
+                }
+                // Tap-free auto-detect: probe any POI whose size is still unknown
+                // whenever the drawer shows the list and a POI is reachable.
+                if (PoiState.poiSizes.none { it in 16..120 }) {
+                    var probeRan by remember { mutableStateOf(false) }
+                    LaunchedEffect(Unit) {
+                        if (!probeRan) {
+                            probeRan = true
+                            PoiState.detectPoiSizes()
+                        }
+                    }
+                }
+            }
                 }
             }
         }
