@@ -19,6 +19,7 @@ import androidx.compose.ui.unit.sp
 /** Global settings: POI IPs, strip size, stream FPS cap, Magic Poi login, POI on-board modes. */
 @Composable
 fun SettingsScreen() {
+    val ctx = LocalContext.current
     Column(
         Modifier
             .fillMaxSize()
@@ -26,20 +27,90 @@ fun SettingsScreen() {
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        Text("POI addresses (AP mode)", color = NeonCyan)
-        OutlinedTextField(
-            value = PoiState.ip1,
-            onValueChange = { PoiState.ip1 = it; PoiState.clearAddressCache() },
-            label = { Text("POI 1 IP address") },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth()
-        )
-        OutlinedTextField(
-            value = PoiState.ip2,
-            onValueChange = { PoiState.ip2 = it; PoiState.clearAddressCache() },
-            label = { Text("POI 2 IP address") },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth()
+        Text("POI network — up to 8 POIs (blank = not sent to)", color = NeonCyan)
+
+        // Router IP + Discover: probe the /24 subnet for real POIs, mirroring the
+        // main control app's fastScanNetwork (GET /poi-available per host).
+        var routerText by remember { mutableStateOf(PoiState.routerIp) }
+        var scanning by remember { mutableStateOf(false) }
+        var discoverMsg by remember { mutableStateOf("") }
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            OutlinedTextField(
+                value = routerText,
+                onValueChange = { routerText = it },
+                label = { Text("Router IP (subnet for Discover)") },
+                singleLine = true,
+                modifier = Modifier.weight(1f)
+            )
+            OutlinedButton(onClick = {
+                val detected = PoiState.detectRouterIp(ctx)
+                if (detected != null) {
+                    routerText = detected
+                    PoiState.routerIp = detected
+                    discoverMsg = "Router IP detected: $detected"
+                } else {
+                    discoverMsg = "Couldn't detect a router IP — enter it manually"
+                }
+            }) { Text("Detect") }
+        }
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Button(
+                onClick = {
+                    val r = routerText.trim()
+                    if (!PoiState.isValidIp(r)) {
+                        discoverMsg = "Invalid router IP — use e.g. 192.168.1.1"
+                        return@Button
+                    }
+                    PoiState.routerIp = r
+                    scanning = true
+                    discoverMsg = "Scanning ${r.substringBeforeLast(".")}.1–254…"
+                    PoiState.discoverPois(
+                        r,
+                        onProgress = { scanned -> discoverMsg = "Scanning… $scanned/254" },
+                        onResult = { found ->
+                            scanning = false
+                            if (found.isEmpty()) {
+                                discoverMsg = "No POIs found — enter IPs manually below"
+                            } else {
+                                found.take(PoiState.MAX_POIS).forEachIndexed { i, ip -> PoiState.setPoiIp(i, ip) }
+                                for (i in found.size until PoiState.MAX_POIS) PoiState.setPoiIp(i, "")
+                                PoiState.clearAddressCache()
+                                discoverMsg = "Discovered ${found.size} POI(s): ${found.joinToString(", ")}"
+                            }
+                        }
+                    )
+                },
+                enabled = !scanning
+            ) { Text(if (scanning) "Scanning…" else "Discover") }
+        }
+        if (discoverMsg.isNotEmpty()) {
+            Text(discoverMsg, color = NeonYellow, fontSize = 13.sp)
+        }
+
+        // 8 POI slots in a compact 2-column grid; empty slots are simply skipped.
+        for (pair in 0 until PoiState.MAX_POIS step 2) {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedTextField(
+                    value = PoiState.poiIps[pair],
+                    onValueChange = { PoiState.setPoiIp(pair, it) },
+                    label = { Text("POI ${pair + 1}") },
+                    singleLine = true,
+                    modifier = Modifier.weight(1f)
+                )
+                if (pair + 1 < PoiState.MAX_POIS) {
+                    OutlinedTextField(
+                        value = PoiState.poiIps[pair + 1],
+                        onValueChange = { PoiState.setPoiIp(pair + 1, it) },
+                        label = { Text("POI ${pair + 2}") },
+                        singleLine = true,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+            }
+        }
+        Text(
+            "Streaming, priming and on-board modes are sent to every POI with a valid IP — leave a field blank to skip that POI.",
+            color = Color.White.copy(alpha = 0.5f), fontSize = 12.sp
         )
 
         Text("Default LED strip size", color = NeonCyan)
@@ -211,10 +282,15 @@ private fun MagicPoiAccountSection() {
 }
 
 private fun sendMode(m: String) {
-    PoiState.statusText = "Sending mode $m to both POIs…"
+    val n = PoiState.configuredIps().size
+    if (n == 0) {
+        PoiState.statusText = "No POI IPs configured — add them above"
+        return
+    }
+    PoiState.statusText = "Sending mode $m to $n POI(s)…"
     PoiState.sendRawPattern(m) { ok ->
         PoiState.statusText =
-            if (ok) "Mode $m activated on both POIs"
+            if (ok) "Mode $m activated on $n POI(s)"
             else "Mode $m failed — check POI WiFi"
     }
 }
