@@ -246,6 +246,29 @@ object ServerBridge {
 
     private val streams = java.util.concurrent.CopyOnWriteArrayList<StreamRelay>()
 
+    // ---- WiFi high-perf lock: Android/Samsung WiFi power-save batches outgoing
+    // UDP, causing periodic lag on the phone->POI hop. Hold a lock while streaming.
+    @Volatile private var wifiLock: android.net.wifi.WifiManager.WifiLock? = null
+    private var appCtx: android.content.Context? = null
+
+    private fun acquireWifiLock() {
+        if (wifiLock != null) return
+        val ctx = appCtx ?: return
+        try {
+            val wm = ctx.getSystemService(android.content.Context.WIFI_SERVICE) as android.net.wifi.WifiManager
+            wifiLock = wm.createWifiLock(
+                android.net.wifi.WifiManager.WIFI_MODE_FULL_HIGH_PERF, "smartpoi-stream").apply {
+                setReferenceCounted(false)
+                acquire()
+            }
+        } catch (e: Exception) { /* ignore */ }
+    }
+
+    private fun releaseWifiLock() {
+        try { wifiLock?.release() } catch (_: Exception) {}
+        wifiLock = null
+    }
+
     private fun recomputeConnected() {
         connected = streams.any { it.connected }
     }
@@ -263,6 +286,7 @@ object ServerBridge {
     private const val PING_INTERVAL_MS = 5000L   // server prunes silent clients at 15s
 
     fun load(ctx: Context) {
+        appCtx = ctx.applicationContext
         val p = ctx.getSharedPreferences("SmartPoiPrefs", Context.MODE_PRIVATE)
         serverIp = p.getString("bridge_ip", serverIp) ?: serverIp
         httpPort = p.getInt("bridge_http", httpPort)
@@ -322,6 +346,7 @@ object ServerBridge {
         }
 
         PoiState.startPresenceMonitor()
+        acquireWifiLock()
         packetsRelayed = 0
         running = true
         val sizes = groups.keys.toList()
@@ -358,6 +383,7 @@ object ServerBridge {
         running = false
         connected = false
         PoiState.stopPresenceMonitor()
+        releaseWifiLock()
         val total = packetsRelayed
         val relays = streams.toList()
         streams.clear()
