@@ -38,7 +38,12 @@ object PoiState {
     val poiSizes = mutableStateListOf(0, 0, 0, 0, 0, 0, 0, 0)
     var pixelSize by mutableStateOf(60)
     var statusText by mutableStateOf("Ready")
-    /** Max frames per second for streaming loops. */
+    /**
+     * Max frames per second for streaming loops. 4.5 default: the daemon paces
+     * every row at a constant square-normalised column rate, so this is the
+     * sweep speed of a square image; a 1.0 default made parties crawl.
+     */
+    var fpsCap by mutableStateOf(4.5f)
     var fpsCap by mutableStateOf(1.0f)
     /**
      * UDP repeats per row/column. The ESP32 firmware (UDPHandler.handleUDP) does a
@@ -444,7 +449,14 @@ object PoiState {
             poiSizes[i] = p.getInt("poiSize$i", 0)
         }
         pixelSize = p.getInt("px", pixelSize)
-        // fpsCap may be stored as Int (old builds) or Float (current) — accept both
+        fpsCap = when (val v = p.all["fpsCap"]) {
+            is Float -> v
+            is Int -> v.toFloat()
+            is Double -> v.toFloat()
+            else -> fpsCap
+        }
+        // Migrate the old broken 1.0 default (whole party at 1 fps) to 4.5.
+        if (fpsCap == 1.0f) fpsCap = 4.5f
         fpsCap = when (val v = p.all["fpsCap"]) {
             is Float -> v
             is Int -> v.toFloat()
