@@ -69,14 +69,17 @@ fun SettingsScreen() {
                         onProgress = { scanned -> discoverMsg = "Scanning… $scanned/254" },
                         onResult = { found ->
                             scanning = false
-                            if (found.isEmpty()) {
-                                discoverMsg = "No POIs found — enter IPs manually below"
-                            } else {
-                                found.take(PoiState.MAX_POIS).forEachIndexed { i, ip -> PoiState.setPoiIp(i, ip) }
-                                for (i in found.size until PoiState.MAX_POIS) PoiState.setPoiIp(i, "")
-                                PoiState.clearAddressCache()
-                                discoverMsg = "Discovered ${found.size} POI(s): ${found.joinToString(", ")}"
-                            }
+                            // Definitive: the scan result REPLACES the POI list (found
+                            // IPs + empty slots for the rest) and is persisted
+                            // immediately, so it survives app restart exactly as scanned.
+                            val take = found.take(PoiState.MAX_POIS)
+                            take.forEachIndexed { i, ip -> PoiState.setPoiIp(i, ip) }
+                            for (i in take.size until PoiState.MAX_POIS) PoiState.setPoiIp(i, "")
+                            PoiState.clearAddressCache()
+                            PoiState.save(ctx)
+                            discoverMsg = if (take.isEmpty())
+                                "No POIs found — list cleared"
+                            else "Discovered ${take.size} POI(s): ${found.joinToString(", ")}"
                         }
                     )
                 },
