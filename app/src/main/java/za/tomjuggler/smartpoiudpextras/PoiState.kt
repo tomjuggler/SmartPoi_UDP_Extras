@@ -57,6 +57,40 @@ object PoiState {
 
     private val socket = DatagramSocket()
 
+    // ---- POI presence: skip offline POIs so UDP sends never block on ARP ----
+    private val presentIps = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+    @Volatile private var presenceRunning = false
+
+    fun isPresent(ip: String): Boolean = presentIps.contains(ip)
+
+    /** Probe each configured POI (TCP :80) on a background thread; only reachable
+     *  POIs receive UDP. Sending to an offline POI makes DatagramSocket.send
+     *  block on ARP resolution (retried periodically = the regular lag). */
+    fun startPresenceMonitor() {
+        if (presenceRunning) return
+        presenceRunning = true
+        presentIps.addAll(configuredIps())  // optimistic until first probe
+        Thread {
+            while (presenceRunning) {
+                for (ip in configuredIps()) {
+                    try {
+                        val s = java.net.Socket()
+                        s.connect(java.net.InetSocketAddress(ip, 80), 800)
+                        s.close()
+                        presentIps.add(ip)
+                    } catch (e: Exception) {
+                        presentIps.remove(ip)
+                    }
+                }
+                try { Thread.sleep(3000) } catch (e: InterruptedException) { break }
+            }
+        }.apply { name = "smartpoi-presence"; isDaemon = true }.start()
+    }
+
+    fun stopPresenceMonitor() {
+        presenceRunning = false
+    }
+
     // Cached address lookups: never do DNS/getByName inside the per-packet hot path.
     private val addrCache = java.util.concurrent.ConcurrentHashMap<String, InetAddress>()
     private fun resolve(ip: String): InetAddress =
@@ -198,10 +232,10 @@ object PoiState {
     }
 
 
-    /** Send one raw row to specific POIs (Zap Game: one POI at a time). */
     fun sendRowTo(ips: List<String>, row: ByteArray) {
         try {
             for (ip in ips) {
+                if (!isPresent(ip)) continue  // skip offline POI (avoid ARP block)
                 val packet = DatagramPacket(row, row.size, resolve(ip), UDP_PORT)
                 repeat(PoiState.packetRepeat) { socket.send(packet) }
             }

@@ -321,6 +321,7 @@ object ServerBridge {
             return
         }
 
+        PoiState.startPresenceMonitor()
         packetsRelayed = 0
         running = true
         val sizes = groups.keys.toList()
@@ -356,6 +357,7 @@ object ServerBridge {
     fun stop(onStatus: (String) -> Unit) {
         running = false
         connected = false
+        PoiState.stopPresenceMonitor()
         val total = packetsRelayed
         val relays = streams.toList()
         streams.clear()
