@@ -90,7 +90,7 @@ object ServerBridge {
                     socket = s
 
                     val px = size.coerceIn(16, 120)
-                    val fps = PoiState.fpsCap.coerceIn(0.5f, 60f)
+                    val fps = PoiState.fpsCap.coerceIn(0.5f, 20f)
                     val regMsg = if (magicPoi) {
                         val owner = if (ownerFlag) ",\"owner\":true" else ""
                         "$MP_REG_MSG {\"party\":$partyId,\"size\":$px,\"fps\":$fps$owner}"
