@@ -481,7 +481,11 @@ object PoiState {
             // per-POI detected size (0 = unknown → global default is used)
             poiSizes[i] = p.getInt("poiSize$i", 0)
         }
-        pixelSize = p.getInt("px", pixelSize)
+        fpsCap = when (val v = p.all["fpsCap"]) {
+            is Float -> v
+            is Number -> v.toFloat()   // covers Int/Long/Double on all devices
+            else -> fpsCap
+        }
         fpsCap = when (val v = p.all["fpsCap"]) {
             is Float -> v
             is Int -> v.toFloat()

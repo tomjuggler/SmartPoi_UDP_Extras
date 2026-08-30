@@ -211,7 +211,11 @@ object ServerBridge {
                 }
                 val now = System.nanoTime()
                 if (nextSendAt > now) {
-                    Thread.sleep((nextSendAt - now) / 1_000_000)
+                    try {
+                        Thread.sleep((nextSendAt - now) / 1_000_000)
+                    } catch (e: InterruptedException) {
+                        break  // stopped (stop() interrupts this thread)
+                    }
                 }
                 PoiState.sendRowTo(ips, payload)
                 relayed.incrementAndGet()

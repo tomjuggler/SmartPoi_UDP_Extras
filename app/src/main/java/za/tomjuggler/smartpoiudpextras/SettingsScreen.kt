@@ -150,9 +150,12 @@ fun SettingsScreen() {
                 value = fpsText,
                 onValueChange = { v ->
                     fpsText = v
-                    v.toFloatOrNull()?.let { f ->
-                        if (f in 0.5f..30.0f) PoiState.fpsCap = f
-                    }
+                        v.toFloatOrNull()?.let { f ->
+                            if (f in 0.5f..30.0f) {
+                                PoiState.fpsCap = f
+                                PoiState.save(ctx)  // persist immediately
+                            }
+                        }
                 },
                 label = { Text("FPS") },
                 singleLine = true,
