@@ -80,6 +80,12 @@ object ServerBridge {
         @Volatile var connected = false
         val relayed = java.util.concurrent.atomic.AtomicLong(0)
 
+        // Jitter buffer: absorbs WAN/WiFi UDP bursts so columns go to the POIs
+        // at a steady interval instead of burst-then-gap.
+        private val queue = java.util.concurrent.ArrayBlockingQueue<ByteArray>(size.coerceIn(16, 120))
+        private var sender: Thread? = null
+        @Volatile private var lastUiUpdate = 0L
+
         fun start(onStatus: (String) -> Unit) {
             running = true
             val t = Thread {
@@ -90,7 +96,7 @@ object ServerBridge {
                     socket = s
 
                     val px = size.coerceIn(16, 120)
-                    val fps = PoiState.fpsCap.coerceIn(0.5f, 20f)
+                    val fps = PoiState.fpsCap.coerceIn(0.5f, 30f)
                     val regMsg = if (magicPoi) {
                         val owner = if (ownerFlag) ",\"owner\":true" else ""
                         "$MP_REG_MSG {\"party\":$partyId,\"size\":$px,\"fps\":$fps$owner}"
@@ -133,6 +139,13 @@ object ServerBridge {
                     }
                     connected = true
 
+                    // Sender thread drains the jitter buffer at the target column
+                    // interval, decoupling POI pacing from network burstiness.
+                    sender = Thread(Runnable { senderLoop() }, "smartpoi-send-${size}px").apply {
+                        isDaemon = true
+                        start()
+                    }
+
                     val buf = ByteArray(1024)
                     val rx = DatagramPacket(buf, buf.size)
                     var lastPacketAt = System.currentTimeMillis()
@@ -155,10 +168,11 @@ object ServerBridge {
                             lastPacketAt = System.currentTimeMillis()
                             val payload = ByteArray(rx.length)
                             System.arraycopy(rx.data, rx.offset, payload, 0, rx.length)
-                            PoiState.sendRowTo(ips, payload)
-                            relayed.incrementAndGet()
-                            ServerBridge.packetsRelayed =
-                                ServerBridge.streams.sumOf { it.relayed.get() }
+                            // drop-oldest if the buffer is full (stay current)
+                            if (!queue.offer(payload)) {
+                                queue.poll()
+                                queue.offer(payload)
+                            }
                         } catch (_: SocketTimeoutException) {
                             if (running && System.currentTimeMillis() - lastPacketAt > 4000) {
                                 onStatus("[$px px] No packets from server for 4s… still listening")
@@ -180,9 +194,42 @@ object ServerBridge {
             t.start()
         }
 
+        private fun targetStepMs(): Long {
+            val fps = ServerBridge.serverFps.takeIf { it > 0f } ?: PoiState.fpsCap.coerceIn(0.5f, 30f)
+            val cols = (size.coerceIn(16, 120) / 2).coerceAtLeast(1)
+            return (1000.0 / (fps * cols)).toLong().coerceAtLeast(1L)
+        }
+
+        private fun senderLoop() {
+            val stepMs = targetStepMs()
+            var nextSendAt = 0L
+            while (true) {
+                val payload = try {
+                    queue.take()
+                } catch (e: InterruptedException) {
+                    break
+                }
+                val now = System.nanoTime()
+                if (nextSendAt > now) {
+                    Thread.sleep((nextSendAt - now) / 1_000_000)
+                }
+                PoiState.sendRowTo(ips, payload)
+                relayed.incrementAndGet()
+                nextSendAt = System.nanoTime() + stepMs * 1_000_000L
+                // throttled UI counter update (~4/s) — never per-packet
+                val t = System.currentTimeMillis()
+                if (t - lastUiUpdate >= 250) {
+                    lastUiUpdate = t
+                    ServerBridge.packetsRelayed = ServerBridge.streams.sumOf { it.relayed.get() }
+                }
+            }
+        }
+
         /** UNREG from the SAME socket that registered, then close. */
         fun stop() {
             running = false
+            sender?.interrupt()
+            thread?.interrupt()
             val s = socket
             if (s != null && !s.isClosed) {
                 try {

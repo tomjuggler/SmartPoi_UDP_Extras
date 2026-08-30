@@ -12,8 +12,8 @@ android {
         applicationId = "za.tomjuggler.smartpoiudpextras"
         minSdk = 26
         targetSdk = 36
-        versionCode = 3
-        versionName = "1.1.3"
+        versionCode = 4
+        versionName = "1.1.4"
     }
 
     buildTypes {

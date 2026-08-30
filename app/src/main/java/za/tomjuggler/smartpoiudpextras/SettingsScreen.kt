@@ -140,7 +140,7 @@ fun SettingsScreen() {
         Text("Default LED strip size (fallback when a POI's size wasn't detected)", color = NeonCyan)
         SizeSelector(PoiState.pixelSize) { }
 
-        Text("Stream frame-rate cap (0.5 – 20.0 fps)", color = NeonCyan)
+        Text("Stream frame-rate cap (0.5 – 30.0 fps)", color = NeonCyan)
         var fpsText by remember(PoiState.fpsCap) { mutableStateOf("%.2f".format(PoiState.fpsCap)) }
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             OutlinedTextField(
@@ -148,7 +148,7 @@ fun SettingsScreen() {
                 onValueChange = { v ->
                     fpsText = v
                     v.toFloatOrNull()?.let { f ->
-                        if (f in 0.5f..20.0f) PoiState.fpsCap = f
+                        if (f in 0.5f..30.0f) PoiState.fpsCap = f
                     }
                 },
                 label = { Text("FPS") },
@@ -156,8 +156,8 @@ fun SettingsScreen() {
                 modifier = Modifier.width(140.dp)
             )
             Text(
-                if (PoiState.fpsCap in 0.5f..20.0f) "✓" else "enter 0.5–20.0",
-                color = if (PoiState.fpsCap in 0.5f..20.0f) Color(0xFF00E676) else Color(0xFFFF5252),
+                if (PoiState.fpsCap in 0.5f..30.0f) "✓" else "enter 0.5–30.0",
+                color = if (PoiState.fpsCap in 0.5f..30.0f) Color(0xFF00E676) else Color(0xFFFF5252),
                 fontSize = 14.sp
             )
         }
