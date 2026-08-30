@@ -44,7 +44,6 @@ object PoiState {
      * sweep speed of a square image; a 1.0 default made parties crawl.
      */
     var fpsCap by mutableStateOf(4.5f)
-    var fpsCap by mutableStateOf(1.0f)
     /**
      * UDP repeats per row/column. The ESP32 firmware (UDPHandler.handleUDP) does a
      * full FastLED.show() per received datagram (~2ms for 60 LEDs), so each repeat
@@ -457,12 +456,6 @@ object PoiState {
         }
         // Migrate the old broken 1.0 default (whole party at 1 fps) to 4.5.
         if (fpsCap == 1.0f) fpsCap = 4.5f
-        fpsCap = when (val v = p.all["fpsCap"]) {
-            is Float -> v
-            is Int -> v.toFloat()
-            is Double -> v.toFloat()
-            else -> fpsCap
-        }
         packetRepeat = when (val v = p.all["packetRepeat"]) {
             is Int -> v.coerceIn(1, 3)
             is Long -> v.toInt().coerceIn(1, 3)
