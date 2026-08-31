@@ -260,7 +260,14 @@ object MagicPoi {
         CoroutineScope(Dispatchers.IO).launch {
             try {
                 postWithAuth("/api/stream/party/$id/start", JSONObject())
-                withContext(Dispatchers.Main) { onResult("Party started!") }
+                // Drop the idle-cylon backlog buffered before START so the POIs
+                // jump straight into the timeline instead of sweeping stale
+                // idle rows for the first ~0.5 s.
+                ServerBridge.clearQueues()
+                withContext(Dispatchers.Main) {
+                    partyState = "playing"
+                    onResult("Party started!")
+                }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) { onResult("Start failed — ${e.message}") }
             }

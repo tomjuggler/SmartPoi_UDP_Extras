@@ -81,8 +81,10 @@ object ServerBridge {
         val relayed = java.util.concurrent.atomic.AtomicLong(0)
 
         // Jitter buffer: absorbs WAN/WiFi UDP bursts so columns go to the POIs
-        // at a steady interval instead of burst-then-gap.
-        private val queue = java.util.concurrent.ArrayBlockingQueue<ByteArray>(size.coerceIn(16, 120))
+        // at a steady interval instead of burst-then-gap. Capacity = 2 full
+        // frames (rows per compressed frame = size/2), enough to ride out a
+        // typical WAN burst without dropping mid-frame columns.
+        private val queue = java.util.concurrent.ArrayBlockingQueue<ByteArray>((size.coerceIn(16, 120) * 2).coerceAtLeast(32))
         private var sender: Thread? = null
         @Volatile private var lastUiUpdate = 0L
 
@@ -194,14 +196,27 @@ object ServerBridge {
             t.start()
         }
 
-        private fun targetStepMs(): Long {
+        /**
+         * Column interval in NANOSECONDS at the daemon's constant
+         * square-normalised rate (1e9 / (fps * size/2)) — the exact cadence
+         * magicpoi-streamd paces rows at. Using ns (not integer ms) keeps the
+         * relay's drain rate in step with the server: at 4.5 fps/60 px the true
+         * step is 7.407 ms; the old ms-truncated 7 ms made the relay ~5 % faster
+         * than the server, slowly starving its own jitter buffer.
+         */
+        private fun targetStepNs(): Long {
             val fps = ServerBridge.serverFps.takeIf { it > 0f } ?: PoiState.fpsCap.coerceIn(0.5f, 30f)
             val cols = (size.coerceIn(16, 120) / 2).coerceAtLeast(1)
-            return (1000.0 / (fps * cols)).toLong().coerceAtLeast(1L)
+            return (1_000_000_000.0 / (fps * cols)).toLong().coerceAtLeast(1_000_000L)
+        }
+
+        /** Drop buffered rows (e.g. stale idle-cylon backlog when START is pressed). */
+        fun clear() {
+            queue.clear()
         }
 
         private fun senderLoop() {
-            val stepMs = targetStepMs()
+            val stepNs = targetStepNs()
             var nextSendAt = 0L
             while (true) {
                 val payload = try {
@@ -210,7 +225,14 @@ object ServerBridge {
                     break
                 }
                 val now = System.nanoTime()
-                if (nextSendAt > now) {
+                // Pace ONLY while we actually hold buffered surplus; when the
+                // buffer is nearly empty (network gap, frame boundary, or a
+                // backlog that just cleared) send immediately so the POIs never
+                // freeze longer than the real network delay. This is a jitter
+                // smoother, not a rate limiter: it absorbs WAN bursts by pacing
+                // them out at the server's cadence, but never adds latency that
+                // the data doesn't already have.
+                if (nextSendAt > now && queue.size() >= 2) {
                     try {
                         Thread.sleep((nextSendAt - now) / 1_000_000)
                     } catch (e: InterruptedException) {
@@ -219,7 +241,9 @@ object ServerBridge {
                 }
                 PoiState.sendRowTo(ips, payload)
                 relayed.incrementAndGet()
-                nextSendAt = System.nanoTime() + stepMs * 1_000_000L
+                // Advance from the ORIGINAL slot time so the cadence grid never
+                // drifts (sleep overshoot no longer accumulates).
+                nextSendAt = now + stepNs
                 // throttled UI counter update (~4/s) — never per-packet
                 val t = System.currentTimeMillis()
                 if (t - lastUiUpdate >= 250) {
@@ -393,6 +417,17 @@ object ServerBridge {
         streams.clear()
         for (r in relays) r.stop()
         onStatus("Left stream ($total packets relayed)")
+    }
+
+    /**
+     * Drop stale buffered rows in every relay. Called when the party flips to
+     * PLAYING so the idle-cylon backlog accumulated before START (the daemon
+     * streams cylon while "ready") is never replayed to the POIs — without this
+     * the strip sweeps ~0.5 s of the old idle pattern right after pressing
+     * START before the timeline's first frame arrives.
+     */
+    fun clearQueues() {
+        for (r in streams) r.clear()
     }
 }
 
