@@ -232,7 +232,7 @@ object ServerBridge {
                 // smoother, not a rate limiter: it absorbs WAN bursts by pacing
                 // them out at the server's cadence, but never adds latency that
                 // the data doesn't already have.
-                if (nextSendAt > now && queue.size() >= 2) {
+                if (nextSendAt > now && queue.size >= 2) {
                     try {
                         Thread.sleep((nextSendAt - now) / 1_000_000)
                     } catch (e: InterruptedException) {
