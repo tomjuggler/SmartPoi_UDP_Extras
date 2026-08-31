@@ -423,36 +423,46 @@ object PoiState {
      * Returns null when neither can be found (caller asks for manual entry).
      */
     fun detectRouterIp(ctx: Context): String? {
-        // 1) hotspot / local-only hotspot: the phone is the AP
+        // 1) hotspot / local-only hotspot: the phone is the AP. Android names
+        // the softAP interface ap0/swlan0/softap0/wlan1/wlan2/… — its IPv4 is
+        // the subnet gateway the POIs live on. Enumerate interfaces directly
+        // (not via ConnectivityManager) so this works while a VPN is active.
         try {
             val interfaces = NetworkInterface.getNetworkInterfaces() ?: return null
             for (networkInterface in interfaces) {
                 val name = networkInterface.name.lowercase()
-                if (name.contains("ap") || name.contains("swlan") || name.contains("wlan1") || name.contains("softap")) {
-                    val addresses = networkInterface.inetAddresses
-                    for (inetAddress in addresses) {
-                        if (!inetAddress.isLoopbackAddress && inetAddress is Inet4Address) {
-                            return inetAddress.hostAddress
-                        }
+                val isApLike = name.contains("ap") || name.contains("swlan") ||
+                    name.contains("softap") ||
+                    (name.startsWith("wlan") && (name.removePrefix("wlan").toIntOrNull() ?: 0) >= 1)
+                if (!isApLike) continue
+                val addresses = networkInterface.inetAddresses
+                for (inetAddress in addresses) {
+                    if (!inetAddress.isLoopbackAddress && inetAddress is Inet4Address) {
+                        return inetAddress.hostAddress
                     }
                 }
             }
         } catch (e: Exception) {
             // fall through to the router gateway check
         }
-        // 2) normal router: the default route's gateway (WiFi client or LAN)
+        // 2) normal router: the default route's gateway on the WiFi interface.
+        // Scan EVERY network, not just activeNetwork: a VPN (e.g. Tailscale)
+        // makes itself the active network, and its tun* LinkProperties carry no
+        // wlan default route — the WiFi gateway would be invisible.
         try {
             val cm = ctx.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-            val lp = cm.getLinkProperties(cm.activeNetwork) ?: return null
-            for (route in lp.routes) {
-                if (route.isDefaultRoute()) {
-                    // only trust gateways on a WiFi interface (wlan0/wlan1/…);
-                    // the carrier's default route (rmnet/eth) is useless for POIs
-                    val iface = route.getInterface()?.lowercase()
-                    if (iface?.contains("wlan") != true) continue
-                    val gw = route.gateway
-                    if (gw != null && !gw.isLoopbackAddress && gw is Inet4Address) {
-                        return gw.hostAddress
+            for (network in cm.allNetworks) {
+                val lp = cm.getLinkProperties(network) ?: continue
+                for (route in lp.routes) {
+                    if (route.isDefaultRoute()) {
+                        // only trust gateways on a WiFi interface (wlan0/wlan1/…);
+                        // the carrier's default route (rmnet/eth) is useless for POIs
+                        val iface = route.getInterface()?.lowercase()
+                        if (iface?.contains("wlan") != true) continue
+                        val gw = route.gateway
+                        if (gw != null && !gw.isLoopbackAddress && gw is Inet4Address) {
+                            return gw.hostAddress
+                        }
                     }
                 }
             }
@@ -460,6 +470,22 @@ object PoiState {
             // no permission / no network — caller shows a manual-entry hint
         }
         return null
+    }
+
+    /** True when the phone itself is the softAP (hotspot / local-only hotspot). */
+    fun isHotspotActive(): Boolean {
+        return try {
+            val interfaces = NetworkInterface.getNetworkInterfaces() ?: return false
+            for (networkInterface in interfaces) {
+                val name = networkInterface.name.lowercase()
+                if (name.contains("ap") || name.contains("swlan") || name.contains("softap") ||
+                    (name.startsWith("wlan") && (name.removePrefix("wlan").toIntOrNull() ?: 0) >= 1)
+                ) return true
+            }
+            false
+        } catch (e: Exception) {
+            false
+        }
     }
 
     // ---- persistence ----

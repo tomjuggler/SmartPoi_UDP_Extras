@@ -28,6 +28,12 @@ fun SettingsScreen() {
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         Text("POI network — up to 8 POIs (blank = not sent to)", color = NeonCyan)
+        if (remember { PoiState.isHotspotActive() }) {
+            Text(
+                "Phone hotspot active — Discover scans the phone's own subnet (AP IP above).",
+                color = NeonYellow, fontSize = 12.sp
+            )
+        }
 
         // Router IP + Discover: probe the /24 subnet for real POIs, mirroring the
         // main control app's fastScanNetwork (GET /poi-available per host).

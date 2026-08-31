@@ -274,25 +274,67 @@ object ServerBridge {
 
     private val streams = java.util.concurrent.CopyOnWriteArrayList<StreamRelay>()
 
-    // ---- WiFi high-perf lock: Android/Samsung WiFi power-save batches outgoing
-    // UDP, causing periodic lag on the phone->POI hop. Hold a lock while streaming.
+    // ---- Wake locks held while streaming ----
+    // WiFi high-perf lock: Android/Samsung WiFi power-save batches outgoing UDP,
+    // causing periodic lag on the phone->POI hop. CPU partial lock: keeps the
+    // relay threads alive with the screen off (hotspot usage = phone in pocket;
+    // without it Doze/CPU-sleep freezes the relay and the POIs stick).
+    // BOTH need android.permission.WAKE_LOCK — without it createWifiLock()/
+    // acquire() throw SecurityException and the lock silently never engages.
     @Volatile private var wifiLock: android.net.wifi.WifiManager.WifiLock? = null
+    @Volatile private var cpuLock: android.os.PowerManager.WakeLock? = null
     private var appCtx: android.content.Context? = null
 
-    private fun acquireWifiLock() {
-        if (wifiLock != null) return
+    private fun acquireWakeLocks() {
+        if (wifiLock != null && cpuLock != null) return
+        val ctx = appCtx ?: return
+        if (cpuLock == null) {
+            try {
+                val pm = ctx.getSystemService(android.content.Context.POWER_SERVICE) as android.os.PowerManager
+                cpuLock = pm.newWakeLock(
+                    android.os.PowerManager.PARTIAL_WAKE_LOCK, "smartpoi-stream-cpu").apply {
+                    setReferenceCounted(false)
+                    acquire()
+                }
+            } catch (e: Exception) { /* ignore */ }
+        }
+        startStreamService()
+        if (wifiLock == null) {
+            try {
+                val wm = ctx.getSystemService(android.content.Context.WIFI_SERVICE) as android.net.wifi.WifiManager
+                // WIFI_MODE_FULL_LOW_LATENCY (API 29+) is the latency-friendly mode;
+                // FULL_HIGH_PERF is deprecated at API 34 and auto-mapped to it anyway.
+                val lockType = if (android.os.Build.VERSION.SDK_INT >= 29)
+                    android.net.wifi.WifiManager.WIFI_MODE_FULL_LOW_LATENCY
+                else android.net.wifi.WifiManager.WIFI_MODE_FULL_HIGH_PERF
+                wifiLock = wm.createWifiLock(lockType, "smartpoi-stream").apply {
+                    setReferenceCounted(false)
+                    acquire()
+                }
+            } catch (e: Exception) { /* ignore */ }
+        }
+    }
+
+    // Foreground service: Doze/App-Standby suspend network and ignore wake locks,
+    // so with the screen off (phone in pocket during poi spinning) only a
+    // foreground service keeps the relay threads from being throttled.
+    private fun startStreamService() {
         val ctx = appCtx ?: return
         try {
-            val wm = ctx.getSystemService(android.content.Context.WIFI_SERVICE) as android.net.wifi.WifiManager
-            wifiLock = wm.createWifiLock(
-                android.net.wifi.WifiManager.WIFI_MODE_FULL_HIGH_PERF, "smartpoi-stream").apply {
-                setReferenceCounted(false)
-                acquire()
-            }
+            val intent = android.content.Intent(ctx, StreamService::class.java)
+            androidx.core.content.ContextCompat.startForegroundService(ctx, intent)
         } catch (e: Exception) { /* ignore */ }
     }
 
-    private fun releaseWifiLock() {
+    private fun stopStreamService() {
+        val ctx = appCtx ?: return
+        try { ctx.stopService(android.content.Intent(ctx, StreamService::class.java)) } catch (_: Exception) {}
+    }
+
+    private fun releaseWakeLocks() {
+        stopStreamService()
+        try { cpuLock?.release() } catch (_: Exception) {}
+        cpuLock = null
         try { wifiLock?.release() } catch (_: Exception) {}
         wifiLock = null
     }
@@ -374,7 +416,7 @@ object ServerBridge {
         }
 
         PoiState.startPresenceMonitor()
-        acquireWifiLock()
+        acquireWakeLocks()
         packetsRelayed = 0
         running = true
         val sizes = groups.keys.toList()
@@ -411,7 +453,7 @@ object ServerBridge {
         running = false
         connected = false
         PoiState.stopPresenceMonitor()
-        releaseWifiLock()
+        releaseWakeLocks()
         val total = packetsRelayed
         val relays = streams.toList()
         streams.clear()
