@@ -91,6 +91,15 @@ object PoiState {
         presenceRunning = false
     }
 
+    // ---- one-sketch-at-a-time arbitration ----
+    // Monotonic token claimed by each local sketch. Loops abort as soon as their
+    // token is stale, so starting any sketch (or leaving a screen) stops the
+    // previous one even if its loop has no coroutine suspension point.
+    @Volatile private var localEpoch = 0L
+    fun newLocalEpoch(): Long { localEpoch++; return localEpoch }
+    fun isLocalEpochCurrent(token: Long): Boolean = localEpoch == token
+    fun cancelLocalSketches() { localEpoch++ }
+
     // Cached address lookups: never do DNS/getByName inside the per-packet hot path.
     private val addrCache = java.util.concurrent.ConcurrentHashMap<String, InetAddress>()
     private fun resolve(ip: String): InetAddress =

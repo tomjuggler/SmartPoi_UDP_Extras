@@ -104,6 +104,7 @@ fun AppScaffold() {
             // leaving a streaming screen cuts the UDP stream (LEDs OFF)
             DisposableEffect(screen) {
                 onDispose {
+                    PoiState.cancelLocalSketches()  // one sketch at a time
                     PoiState.signalStop { }
                 }
             }

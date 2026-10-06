@@ -36,6 +36,9 @@ fun LightSaberScreen() {
     var on by remember { mutableStateOf(false) }
     var color by remember { mutableStateOf(Color(0, 0, 255)) }
     var mp by remember { mutableStateOf<MediaPlayer?>(null) }
+    var onDurMs by remember { mutableStateOf(2156) }   // lightup.mp3 length (ms)
+    var offDurMs by remember { mutableStateOf(2156) }  // lightoff.mp3 length (ms)
+    var lastSoundMs by remember { mutableStateOf(0) }
 
     fun playSound(name: String) {
         mp?.release()
@@ -44,26 +47,29 @@ fun LightSaberScreen() {
             MediaPlayer().apply {
                 setDataSource(afd.fileDescriptor, afd.startOffset, afd.length)
                 prepare(); afd.close(); start()
-            }.also { mp = it }
+            }.also { mp = it; lastSoundMs = it.duration }
         } catch (e: Exception) {
             PoiState.statusText = "Audio: ${e.message}"
         }
     }
 
-    // ON: grow a lit bar across each strip, one LED per step (1, 1+2, 1+2+3, …).
-    // Same incremental line frames as the Zap Game, but cumulative — each frame
-    // resends every LED lit so far, so the earlier ones stay lit. Datagrams are
-    // sized per POI (firmware maps byte i -> LED i and needs exactly NUM_PX bytes).
-    LaunchedEffect(on, color, PoiState.pixelSize, PoiState.poiSizes.toList()) {
+    // ON: grow a lit bar across each strip, one LED per step (1, 1+2, 1+2+3, …),
+    // paced so the whole sweep takes as long as lightup.mp3 (~2.16 s). Same per-POI
+    // datagram sizing as the Zap Game; each frame resends every LED lit so far so
+    // the earlier ones stay lit.
+    LaunchedEffect(on, color, PoiState.pixelSize, PoiState.poiSizes.toList(), onDurMs) {
         if (!on) return@LaunchedEffect
         val argb = color.toArgbInt()
+        val token = PoiState.newLocalEpoch()
         for ((size, ips) in poiGroupsBySize()) {
             launch(Dispatchers.IO) {
                 val frame = IntArray(size)
+                val stepMs = (onDurMs.toLong() / size).coerceAtLeast(1L)
                 for (pos in 0 until size) {
+                    if (!PoiState.isLocalEpochCurrent(token)) return@launch
                     frame[pos] = argb
                     PoiState.sendFrameTo(ips, frame, size, 1)
-                    delay(20)  // Zap Game / original sketch cadence
+                    delay(stepMs)
                 }
             }
         }
@@ -101,21 +107,25 @@ fun LightSaberScreen() {
         onDispose { sm.unregisterListener(listener) }
     }
 
-    // OFF: the reverse of ON — start fully lit and remove one LED per step
-    // (full, full-1, … , black), then hand the POIs back to LEDs-OFF mode.
+    // OFF: the reverse of ON — start fully lit and remove one LED per step, paced
+    // to lightoff.mp3, then hand the POIs back to LEDs-OFF mode.
     var ramping by remember { mutableStateOf(false) }
-    LaunchedEffect(ramping) {
+    LaunchedEffect(ramping, offDurMs) {
         if (!ramping) return@LaunchedEffect
         val argb = color.toArgbInt()
+        val token = PoiState.newLocalEpoch()
         for ((size, ips) in poiGroupsBySize()) {
             launch(Dispatchers.IO) {
+                val steps = size + 1
+                val stepMs = (offDurMs.toLong() / steps).coerceAtLeast(1L)
                 val frame = IntArray(size) { argb }
                 PoiState.sendFrameTo(ips, frame, size, 1)  // start fully lit
-                delay(20)
+                delay(stepMs)
                 for (pos in size - 1 downTo 0) {
+                    if (!PoiState.isLocalEpochCurrent(token)) return@launch
                     frame[pos] = 0
                     PoiState.sendFrameTo(ips, frame, size, 1)
-                    delay(20)
+                    delay(stepMs)
                 }
             }
         }
@@ -149,13 +159,15 @@ fun LightSaberScreen() {
             Button(onClick = {
                 PoiState.primeForStreaming { }
                 PoiState.detectPoiSizes()  // learn each POI's NUM_PX → correctly-sized frames
-                on = true
                 playSound("lightup.mp3")
+                if (lastSoundMs > 0) onDurMs = lastSoundMs
+                on = true
             }) { Text("ON") }
             Button(
                 onClick = {
                     on = false
                     playSound("lightoff.mp3")
+                    if (lastSoundMs > 0) offDurMs = lastSoundMs
                     ramping = true // LEDs cycle down to 0 with the sound
                 },
                 enabled = on || ramping,

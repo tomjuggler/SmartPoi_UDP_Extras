@@ -21,6 +21,7 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.isActive
 
 /**
  * Audio Reactive — ported from udp_send_SmartPoi_8_sound_activation.pde.
@@ -58,7 +59,8 @@ fun AudioReactiveScreen() {
             // inline here — no per-buffer coroutine spawn.
             withContext(Dispatchers.Default) {
                 try {
-                    while (running) {
+                    val token = PoiState.newLocalEpoch()
+                    while (isActive && running && PoiState.isLocalEpochCurrent(token)) {
                         val n = recorder.read(buf, 0, buf.size)
                         if (n <= 0) continue
                         var sum = 0L
@@ -78,6 +80,9 @@ fun AudioReactiveScreen() {
             volume = 0f
         }
     }
+
+    // Leaving this screen must stop capture even if a read is in flight.
+    DisposableEffect(Unit) { onDispose { running = false; PoiState.cancelLocalSketches() } }
 
     Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Text("Microphone volume lights the LED line from centre outwards.", color = Color.White.copy(alpha = 0.7f))
