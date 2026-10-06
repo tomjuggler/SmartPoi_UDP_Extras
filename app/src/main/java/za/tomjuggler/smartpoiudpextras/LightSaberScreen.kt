@@ -49,21 +49,17 @@ fun LightSaberScreen() {
         }
     }
 
-    // send triangle frame whenever on/colour/size change while ON
-    LaunchedEffect(on, color, PoiState.pixelSize) {
+    // Send the triangle frame whenever ON/colour/size changes.
+    // IMPORTANT: the POI firmware maps byte i -> LED i and expects each datagram
+    // to be exactly NUM_PX bytes. We therefore build one frame per distinct POI
+    // size and send it to that group; a single pixelSize-sized frame sent to all
+    // POIs (the old behaviour) left e.g. a 120px POI fed 60px rows only partially lit.
+    LaunchedEffect(on, color, PoiState.pixelSize, PoiState.poiSizes.toList()) {
         if (on) {
-            val size = PoiState.pixelSize.coerceAtLeast(16)
-            val frame = IntArray(size * size)
-            for (y in 0 until size) {
-                val lit = y + 1
-                for (o in 0 until lit) {
-                    val x = size - lit + o
-                    if (x in 0 until size)
-                        frame[y * size + x] = color.toArgbInt()
-                }
-            }
+            val groups = poiGroupsBySize()
             launch(Dispatchers.IO) {
-                PoiState.sendFrame(frame, size, size)  // sent once — repeats live in PoiState
+                for ((size, ips) in groups)
+                    PoiState.sendFrameTo(ips, triangleFrame(size, color.toArgbInt()), size, size)
             }
         }
     }
@@ -100,12 +96,15 @@ fun LightSaberScreen() {
         onDispose { sm.unregisterListener(listener) }
     }
 
-    // OFF: one black frame (repeats handled by PoiState), matching lightoff.mp3
+    // OFF: blank every POI with a black frame sized to that POI.
     var ramping by remember { mutableStateOf(false) }
     LaunchedEffect(ramping) {
         if (ramping) {
-            val size = PoiState.pixelSize.coerceAtLeast(16)
-            launch(Dispatchers.IO) { PoiState.sendFrame(IntArray(size * size), size, size) }
+            val groups = poiGroupsBySize()
+            launch(Dispatchers.IO) {
+                for ((size, ips) in groups)
+                    PoiState.sendFrameTo(ips, IntArray(size * size), size, size)
+            }
             ramping = false
             PoiState.signalStop { PoiState.statusText = it }
         }
@@ -136,6 +135,7 @@ fun LightSaberScreen() {
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Button(onClick = {
                 PoiState.primeForStreaming { }
+                PoiState.detectPoiSizes()  // learn each POI's NUM_PX → correctly-sized frames
                 on = true
                 playSound("lightup.mp3")
             }) { Text("ON") }
@@ -155,6 +155,32 @@ fun LightSaberScreen() {
             color = Color.White.copy(alpha = 0.5f)
         )
     }
+}
+
+/** Right-angle triangle frame (size x size, ARGB): the top row has 1 lit pixel
+ *  at the right edge, each row adds one, ending with a fully-lit bottom row. */
+private fun triangleFrame(size: Int, argb: Int): IntArray {
+    val s = size.coerceAtLeast(16)
+    val frame = IntArray(s * s)
+    for (y in 0 until s) {
+        val lit = y + 1
+        val startX = s - lit
+        for (o in 0 until lit) {
+            val x = startX + o
+            if (x in 0 until s) frame[y * s + x] = argb
+        }
+    }
+    return frame
+}
+
+/** Configured POIs grouped by effective LED count (detected NUM_PX, else the
+ *  global Settings default) so each strip gets correctly-sized datagrams. */
+private fun poiGroupsBySize(): LinkedHashMap<Int, MutableList<String>> {
+    val groups = LinkedHashMap<Int, MutableList<String>>()
+    for (i in PoiState.poiIndices()) {
+        groups.getOrPut(PoiState.sizeAt(i)) { mutableListOf() }.add(PoiState.poiIps[i])
+    }
+    return groups
 }
 
 /** Scale a colour toward black by [f] (0..1). */
