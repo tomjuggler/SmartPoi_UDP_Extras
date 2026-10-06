@@ -235,7 +235,7 @@ object PoiState {
     fun sendRowTo(ips: List<String>, row: ByteArray) {
         try {
             for (ip in ips) {
-                if (!isPresent(ip)) continue  // skip offline POI (avoid ARP block)
+                if (presenceRunning && !isPresent(ip)) continue  // skip offline POI (avoid ARP block)
                 val packet = DatagramPacket(row, row.size, resolve(ip), UDP_PORT)
                 repeat(PoiState.packetRepeat) { socket.send(packet) }
             }
@@ -321,6 +321,10 @@ object PoiState {
 
     /** Prime every configured POI before streaming: LEDs OFF (7) -> UDP Mode (0). Best effort. */
     fun primeForStreaming(onResult: (String) -> Unit) {
+        // Populate the presence set before streaming. sendRowTo() otherwise skips
+        // every POI as "offline" and local UDP screens send nothing until an
+        // online stream (ServerBridge) has started this monitor. Idempotent.
+        startPresenceMonitor()
         CoroutineScope(Dispatchers.IO).launch {
             val ips = configuredIps()
             if (ips.isEmpty()) {

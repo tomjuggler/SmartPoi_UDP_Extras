@@ -25,9 +25,10 @@ import kotlin.math.sqrt
 
 /**
  * Light Saber — ported from udp_send_SmartPoi_8.pde.
- * Right-angle triangle pattern in a chosen colour; ON plays lightup.mp3,
- * OFF plays lightoff.mp3, swinging the phone (accelerometer) plays wave.mp3.
- * Each row is sent 7x for persistence, matching the original sketch.
+ * ON sends an incremental line frame per LED (1, 1+2, 1+2+3, …): the lit bar
+ * grows to cover the whole strip and stays lit. OFF is the same in reverse
+ * (fully lit → one fewer LED per step → black). ON plays lightup.mp3, OFF plays
+ * lightoff.mp3, swinging the phone (accelerometer) plays wave.mp3.
  */
 @Composable
 fun LightSaberScreen() {
@@ -49,17 +50,21 @@ fun LightSaberScreen() {
         }
     }
 
-    // Send the triangle frame whenever ON/colour/size changes.
-    // IMPORTANT: the POI firmware maps byte i -> LED i and expects each datagram
-    // to be exactly NUM_PX bytes. We therefore build one frame per distinct POI
-    // size and send it to that group; a single pixelSize-sized frame sent to all
-    // POIs (the old behaviour) left e.g. a 120px POI fed 60px rows only partially lit.
+    // ON: grow a lit bar across each strip, one LED per step (1, 1+2, 1+2+3, …).
+    // Same incremental line frames as the Zap Game, but cumulative — each frame
+    // resends every LED lit so far, so the earlier ones stay lit. Datagrams are
+    // sized per POI (firmware maps byte i -> LED i and needs exactly NUM_PX bytes).
     LaunchedEffect(on, color, PoiState.pixelSize, PoiState.poiSizes.toList()) {
-        if (on) {
-            val groups = poiGroupsBySize()
+        if (!on) return@LaunchedEffect
+        val argb = color.toArgbInt()
+        for ((size, ips) in poiGroupsBySize()) {
             launch(Dispatchers.IO) {
-                for ((size, ips) in groups)
-                    PoiState.sendFrameTo(ips, triangleFrame(size, color.toArgbInt()), size, size)
+                val frame = IntArray(size)
+                for (pos in 0 until size) {
+                    frame[pos] = argb
+                    PoiState.sendFrameTo(ips, frame, size, 1)
+                    delay(20)  // Zap Game / original sketch cadence
+                }
             }
         }
     }
@@ -96,18 +101,26 @@ fun LightSaberScreen() {
         onDispose { sm.unregisterListener(listener) }
     }
 
-    // OFF: blank every POI with a black frame sized to that POI.
+    // OFF: the reverse of ON — start fully lit and remove one LED per step
+    // (full, full-1, … , black), then hand the POIs back to LEDs-OFF mode.
     var ramping by remember { mutableStateOf(false) }
     LaunchedEffect(ramping) {
-        if (ramping) {
-            val groups = poiGroupsBySize()
+        if (!ramping) return@LaunchedEffect
+        val argb = color.toArgbInt()
+        for ((size, ips) in poiGroupsBySize()) {
             launch(Dispatchers.IO) {
-                for ((size, ips) in groups)
-                    PoiState.sendFrameTo(ips, IntArray(size * size), size, size)
+                val frame = IntArray(size) { argb }
+                PoiState.sendFrameTo(ips, frame, size, 1)  // start fully lit
+                delay(20)
+                for (pos in size - 1 downTo 0) {
+                    frame[pos] = 0
+                    PoiState.sendFrameTo(ips, frame, size, 1)
+                    delay(20)
+                }
             }
-            ramping = false
-            PoiState.signalStop { PoiState.statusText = it }
         }
+        ramping = false
+        PoiState.signalStop { PoiState.statusText = it }
     }
 
     Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -155,22 +168,6 @@ fun LightSaberScreen() {
             color = Color.White.copy(alpha = 0.5f)
         )
     }
-}
-
-/** Right-angle triangle frame (size x size, ARGB): the top row has 1 lit pixel
- *  at the right edge, each row adds one, ending with a fully-lit bottom row. */
-private fun triangleFrame(size: Int, argb: Int): IntArray {
-    val s = size.coerceAtLeast(16)
-    val frame = IntArray(s * s)
-    for (y in 0 until s) {
-        val lit = y + 1
-        val startX = s - lit
-        for (o in 0 until lit) {
-            val x = startX + o
-            if (x in 0 until s) frame[y * s + x] = argb
-        }
-    }
-    return frame
 }
 
 /** Configured POIs grouped by effective LED count (detected NUM_PX, else the

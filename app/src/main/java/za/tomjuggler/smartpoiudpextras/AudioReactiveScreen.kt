@@ -20,6 +20,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * Audio Reactive — ported from udp_send_SmartPoi_8_sound_activation.pde.
@@ -51,21 +52,27 @@ fun AudioReactiveScreen() {
             )
             recorder.startRecording()
             val buf = ShortArray(2048)
-            try {
-                while (running) {
-                    val n = recorder.read(buf, 0, buf.size)
-                    var sum = 0L
-                    for (i in 0 until n) sum += buf[i] * buf[i]
-                    val rms = kotlin.math.sqrt(sum / n.toDouble())
-                    volume = ((rms / 32767.0).coerceIn(0.0, 1.0)).toFloat()
-
-                    val eff = (volume * gain).coerceIn(0f, 1f)
-                    val size = PoiState.pixelSize.coerceAtLeast(16)
-                    val frame = volumeLine(eff, size)
-                    launch(Dispatchers.IO) { PoiState.sendFrame(frame, size, 1) }
+            // Capture + RMS + UDP all run on a background dispatcher: recorder.read()
+            // BLOCKS until a buffer fills (~46 ms) and the old code ran it (and the
+            // per-sample RMS loop) on the main thread, freezing the UI. Sends happen
+            // inline here — no per-buffer coroutine spawn.
+            withContext(Dispatchers.Default) {
+                try {
+                    while (running) {
+                        val n = recorder.read(buf, 0, buf.size)
+                        if (n <= 0) continue
+                        var sum = 0L
+                        for (i in 0 until n) sum += buf[i] * buf[i]
+                        val rms = kotlin.math.sqrt(sum / n.toDouble())
+                        val v = ((rms / 32767.0).coerceIn(0.0, 1.0)).toFloat()
+                        volume = v
+                        val eff = (v * gain).coerceIn(0f, 1f)
+                        val size = PoiState.pixelSize.coerceAtLeast(16)
+                        PoiState.sendFrame(volumeLine(eff, size), size, 1)
+                    }
+                } finally {
+                    recorder.stop(); recorder.release()
                 }
-            } finally {
-                recorder.stop(); recorder.release()
             }
         } else {
             volume = 0f
