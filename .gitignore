@@ -1,10 +1,7 @@
-# --- cecli tooling ---
-.cecli.conf.yml
-.cecli.model.metadata.json
+# --- cecli tooling (never commit agent tooling/state) ---
+.cecli/
 .cecli/*
-# ...but keep the project-local skills tracked (the rest of .cecli stays ignored)
-!.cecli/skills
-!.cecli/skills/**
+.cecli*
 
 # --- Gradle / build output ---
 .gradle/
@@ -38,4 +35,3 @@ captures/
 # --- OS junk ---
 .DS_Store
 Thumbs.db
-.cecli*
